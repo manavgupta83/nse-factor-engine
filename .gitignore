@@ -9,3 +9,8 @@ universe/*.parquet
 __pycache__/
 .ipynb_checkpoints/
 logs/*.log
+signals/final/*.csv
+signals/stage5/*.parquet
+signals/stage5/intermediate/*.parquet
+signals/stage5/intermediate/*.csv
+manual_backups/

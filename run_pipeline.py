@@ -1,7 +1,8 @@
 """
 NSE Factor Engine — Master Pipeline Runner
 Runs Stage 1 (Universe) -> Stage 2 (Core Momentum) -> Stage 3 (Quality)
--> Stage 4 (Entry Quality Filters) in sequence.
+-> Stage 4 (Entry Quality Filters) -> Stage 5 (Ranking & Selection) in
+sequence.
 
 Each stage is invoked as a subprocess, exactly as it would be run manually.
 This script does NOT reimplement any stage's logic — it only sequences
@@ -10,6 +11,7 @@ the existing, already-verified entry-point scripts:
     signals/stage2/stage2_step5_assemble.py
     signals/stage3/stage3_assemble.py
     signals/stage4/stage4_assemble.py
+    signals/stage5/stage5_assemble.py
 
 DESIGN DECISIONS (confirmed explicitly before writing this script):
   - Stage 1 runs under TZ=Asia/Kolkata so date.today() inside
@@ -26,14 +28,28 @@ DESIGN DECISIONS (confirmed explicitly before writing this script):
     (date_counts >= 490 convention) -- this script does NOT compute or
     pass T between stages. Each stage's own internal resolution is the
     source of truth.
+  - Filenames are keyed to RUN_DATE (IST calendar date the pipeline
+    executed), NOT T — confirmed during Stage 5 build (2026-06-30). T
+    (latest trading day with complete data) is recorded separately as
+    as_of_date inside each file and can lag RUN_DATE. Stage 5 requires
+    an exact RUN_DATE match between universe_{run_date}.parquet and
+    momentum_signals_final_{run_date}.parquet — since Stage 1 and
+    Stage 2-4 run back-to-back in this same script under a single
+    invocation, both stamp the same RUN_DATE by construction, so this
+    match is automatic when run via run_pipeline.py. (Running Stage 5
+    standalone on a day Stage 1 was skipped is the one case where this
+    could mismatch — Stage 5 will assert and stop rather than guess.)
 
-KNOWN GAP (flagged, not fixed here):
-  Stage 2's script contains the comment "in_universe merge deferred to
-  Stage 4" -- the in_universe filter computed in Stage 1
-  (universe/universe_{DDMMYYYY}.parquet) is NOT currently applied
-  anywhere in Stage 2, 3, or 4. This master script does not silently
-  add that filtering -- it is a pre-existing gap, left for explicit
-  resolution in a future stage/conversation.
+RESOLVED (previously flagged as a known gap, closed in Stage 5):
+  in_universe (computed in Stage 1, universe/universe_{DDMMYYYY}.parquet)
+  was not applied anywhere in Stage 2/3/4 -- those stages still produce
+  signals for the full ~500-symbol universe, by design (see Stage 2/3/4
+  docs: "in_universe merge deferred to Stage 4" was itself deferred again
+  to Stage 5). Stage 5 is the first stage to load in_universe, merge it
+  onto the final signals file, and use it to scope ranking to the
+  investable universe only. Non-investable symbols are RETAINED in the
+  final output (not dropped) with in_universe=False and NaN rank/FIP
+  columns, per explicit decision during the Stage 5 build.
 """
 import subprocess
 import sys
@@ -51,21 +67,12 @@ RUN_LOG_PATH = LOG_DIR / f"master_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}
 
 
 def log(msg):
-    """Print to stdout AND append to a dedicated run log for this invocation."""
     print(msg)
     with open(RUN_LOG_PATH, "a") as f:
         f.write(msg + "\n")
 
 
 def run_stage(label, script_path, extra_env=None):
-    """
-    Run a stage script as a subprocess, streaming its output LIVE to
-    stdout line-by-line as it runs (not buffered until completion) while
-    also writing every line to the run log. Important for Stage 1 in
-    particular, which can run 15+ minutes with per-symbol progress
-    prints — without live streaming you'd see nothing until it finished.
-    Raises SystemExit if the stage fails (non-zero exit code).
-    """
     log("\n" + "=" * 70)
     log(f"STARTING {label}")
     log(f"Script: {script_path}")
@@ -77,13 +84,13 @@ def run_stage(label, script_path, extra_env=None):
         env.update(extra_env)
 
     process = subprocess.Popen(
-        [sys.executable, "-u", str(script_path)],  # -u: unbuffered child stdout
+        [sys.executable, "-u", str(script_path)],
         cwd=str(BASE),
         env=env,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,  # merge stderr into stdout, single live stream
+        stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,  # line-buffered
+        bufsize=1,
     )
 
     for line in process.stdout:
@@ -102,16 +109,6 @@ def run_stage(label, script_path, extra_env=None):
 
 
 def check_stage1_failures():
-    """
-    run_universe.py writes data/failed_symbols_{YYYYMMDD}.csv ONLY if
-    symbols are still failing after its internal retries. Absence of
-    the file means zero failures. Returns (count, path_or_None).
-    Uses IST date (matching what run_universe.py uses under
-    TZ=Asia/Kolkata) to find the right file. NOTE: failed_symbols_*.csv
-    intentionally still uses YYYYMMDD (unlike universe_*.parquet, which
-    was changed to DDMMYYYY) -- this is an internal artifact only this
-    function reads programmatically.
-    """
     import zoneinfo
     ist_today = datetime.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date()
     failed_path = BASE / "data" / f"failed_symbols_{ist_today.strftime('%Y%m%d')}.csv"
@@ -131,7 +128,6 @@ def main():
     log(f"Log file: {RUN_LOG_PATH}")
     log("#" * 70)
 
-    # ── Stage 1: Universe ──────────────────────────────────────────
     run_stage(
         "STAGE 1 — Universe & Liquidity",
         BASE / "universe" / "run_universe.py",
@@ -146,7 +142,7 @@ def main():
             log(
                 f"\n!!! HALTING: {n_failed} failures >= threshold "
                 f"({FAILED_SYMBOL_HALT_THRESHOLD}). Pipeline will NOT "
-                f"proceed to Stage 2-4 on a meaningfully incomplete "
+                f"proceed to Stage 2-5 on a meaningfully incomplete "
                 f"universe. !!!"
             )
             sys.exit(1)
@@ -154,30 +150,31 @@ def main():
             log(
                 f"\n{n_failed} failures < threshold "
                 f"({FAILED_SYMBOL_HALT_THRESHOLD}) — proceeding to "
-                f"Stage 2-4, but this is a WARNING, not a clean run."
+                f"Stage 2-5, but this is a WARNING, not a clean run."
             )
     else:
         log("\nStage 1: 0 failed symbols. Clean universe run.")
 
-    # ── Stage 2: Core Momentum ─────────────────────────────────────
     run_stage(
         "STAGE 2 — Momentum Core Signals",
         BASE / "signals" / "stage2" / "stage2_step5_assemble.py",
     )
 
-    # ── Stage 3: Quality Signals ───────────────────────────────────
     run_stage(
         "STAGE 3 — Momentum Quality Signals",
         BASE / "signals" / "stage3" / "stage3_assemble.py",
     )
 
-    # ── Stage 4: Entry Quality Filters ─────────────────────────────
     run_stage(
         "STAGE 4 — Entry Quality Filters",
         BASE / "signals" / "stage4" / "stage4_assemble.py",
     )
 
-    # ── Final summary ──────────────────────────────────────────────
+    run_stage(
+        "STAGE 5 — Ranking & Selection",
+        BASE / "signals" / "stage5" / "stage5_assemble.py",
+    )
+
     final_files = sorted(
         glob.glob(str(BASE / "signals" / "final" / "momentum_signals_final_*.parquet"))
     )

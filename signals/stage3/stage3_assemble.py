@@ -40,13 +40,23 @@ T_21  = all_dates[-22]
 T_252 = all_dates[-253]
 AS_OF = T.strftime('%d%m%Y')
 
+# RUN_DATE_STR: IST calendar date this script executed -- used ONLY for
+# filenames (reading Stage 2's input, writing Stage 3's own outputs).
+# AS_OF (above, derived from T) remains the source of truth for the
+# as_of_date COLUMN and all date math (T_21, T_252) -- unchanged.
+# Confirmed 2026-06-30: filenames across stages should share run-date,
+# not T, since T can lag behind the actual run date.
+import zoneinfo
+from datetime import datetime as _dt
+RUN_DATE_STR = _dt.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date().strftime('%d%m%Y')
+
 print(f"T     : {T.date()}")
 print(f"T-21  : {T_21.date()}")
 print(f"T-252 : {T_252.date()}")
 print(f"AS_OF : {AS_OF}")
 
 # ── Load stage 2 signals ──────────────────────────────────────────────────────
-signals = pd.read_parquet(f"{BASE}/signals/stage2/momentum_core_signals_{AS_OF}.parquet")
+signals = pd.read_parquet(f"{BASE}/signals/stage2/momentum_core_signals_{RUN_DATE_STR}.parquet")
 print(f"Stage 2 signals loaded: {signals.shape}")
 
 # ── Formation window T-252 → T-21 ────────────────────────────────────────────
@@ -114,7 +124,7 @@ print(f"\nTotal symbols : {result['symbol'].nunique()}")
 print(f"Total rows    : {len(result)}")
 
 # ── Save stage3 parquet ───────────────────────────────────────────────────────
-out_path = f"{BASE}/signals/stage3/momentum_quality_signals_{AS_OF}.parquet"
+out_path = f"{BASE}/signals/stage3/momentum_quality_signals_{RUN_DATE_STR}.parquet"
 result.to_parquet(out_path, index=False)
 print(f"\nSaved stage3: {out_path}")
 print(f"Shape: {result.shape}")
@@ -122,7 +132,7 @@ print(f"Shape: {result.shape}")
 # ── Merge stage2 + stage3 and save to final ───────────────────────────────────
 os.makedirs(f"{BASE}/signals/final", exist_ok=True)
 final = signals.merge(result.drop(columns=['as_of_date']), on='symbol', how='left')
-final_path = f"{BASE}/signals/final/momentum_signals_final_{AS_OF}.parquet"
+final_path = f"{BASE}/signals/final/momentum_signals_final_{RUN_DATE_STR}.parquet"
 final.to_parquet(final_path, index=False)
 print(f"Saved final : {final_path}")
 print(f"Shape: {final.shape}")

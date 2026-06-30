@@ -31,11 +31,19 @@ T = date_counts[date_counts >= 490].index.max()
 all_dates = sorted(prices[prices['date'] <= T]['date'].unique())
 T_str = pd.Timestamp(T).strftime('%d%m%Y')
 
+# RUN_DATE_STR: IST calendar date this script executed -- used ONLY for
+# locating/writing the final signals filename, since Stage 2/3 now name
+# their outputs by run date, not T (T can lag behind the run date).
+# T_str above remains available for diagnostics/messages referencing T.
+import zoneinfo
+from datetime import datetime as _dt
+RUN_DATE_STR = _dt.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date().strftime('%d%m%Y')
+
 # Input/output path both derived from T via glob, not hardcoded — this
 # script can be re-run on any future date without manual edits, as long
 # as Stage 2+3 has already produced a signals file matching that T.
 import glob
-SIGNALS_PATH = BASE + f"signals/final/momentum_signals_final_{T_str}.parquet"
+SIGNALS_PATH = BASE + f"signals/final/momentum_signals_final_{RUN_DATE_STR}.parquet"
 matches = glob.glob(SIGNALS_PATH)
 assert len(matches) == 1, (
     f"Expected exactly one signals file matching T={T} ({T_str}) at "

@@ -93,7 +93,10 @@ for sym, grp in px.groupby("symbol"):
 df = pd.DataFrame(records)
 
 # --- write output ---
-date_str = T.strftime("%d%m%Y")
+import zoneinfo
+from datetime import datetime as _dt
+_run_date_ist = _dt.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date()
+date_str = _run_date_ist.strftime("%d%m%Y")  # RUN DATE, not T -- see METHODOLOGY.md
 out_path = f"{BASE}/signals/stage2/momentum_core_signals_{date_str}.parquet"
 df.to_parquet(out_path, index=False)
 
