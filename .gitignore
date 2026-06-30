@@ -1,0 +1,11 @@
+data/*.parquet
+data/raw/*.csv
+signals/final/*.parquet
+signals/stage2/*.parquet
+signals/stage3/*.parquet
+signals/stage3/temp/*.parquet
+universe/*.parquet
+*.pyc
+__pycache__/
+.ipynb_checkpoints/
+logs/*.log
