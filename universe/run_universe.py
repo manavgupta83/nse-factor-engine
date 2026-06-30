@@ -364,7 +364,7 @@ universe["passes_adtv"]   = universe["adtv_63_cr"]   >= ADTV_FLOOR
 universe["in_universe"]   = universe["passes_mktcap"] & universe["passes_adtv"]
 
 UNIVERSE_DIR.mkdir(parents=True, exist_ok=True)
-universe_path = UNIVERSE_DIR / "universe_{}.parquet".format(END_DATE.strftime("%Y%m%d"))
+universe_path = UNIVERSE_DIR / "universe_{}.parquet".format(END_DATE.strftime("%d%m%Y"))
 universe.to_parquet(universe_path, index=False)
 print("      {} : {} rows | {} in universe".format(
     universe_path.name, len(universe), universe["in_universe"].sum()))
