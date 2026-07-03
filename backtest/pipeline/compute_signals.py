@@ -1,3 +1,4 @@
+
 """
 Backtest Pipeline — compute_signals(prices, meta, T)
 
@@ -299,6 +300,16 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
     weekly['weinstein_stage2'] = (weekly['close'] > weekly['ma30w']) & (weekly['ma30w'] > weekly['ma30w_prev'])
     ws_df = weekly.sort_values('week').groupby('symbol').last().reset_index()[['symbol', 'weinstein_stage2']]
 
+    # 150-day SMA > 200-day SMA (daily, at T)
+    ws_px['sma150'] = ws_px.groupby('symbol')['close'].transform(lambda x: x.rolling(150, min_periods=100).mean())
+    ws_px['sma200'] = ws_px.groupby('symbol')['close'].transform(lambda x: x.rolling(200, min_periods=130).mean())
+    sma_df = ws_px.sort_values('date').groupby('symbol').last().reset_index()[['symbol', 'sma150', 'sma200']]
+    sma_df['sma150_gt_sma200'] = sma_df['sma150'] > sma_df['sma200']
+
+    ws_df = ws_df.merge(sma_df[['symbol', 'sma150_gt_sma200']], on='symbol', how='left')
+    ws_df['weinstein_stage2'] = ws_df['weinstein_stage2'] & ws_df['sma150_gt_sma200']
+    ws_df = ws_df[['symbol', 'weinstein_stage2']]
+
     # Relative strength
     rs_win = window.copy()
     rs_win['log_ret'] = rs_win.groupby('symbol')['close'].transform(lambda x: np.log(x / x.shift(1)))
@@ -400,6 +411,11 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
         out.loc[out['in_universe'] == True, rank_col] = (
             in_univ[metric].rank(method='min', ascending=False).astype('Int64').values
         )
+
+    # rank_rs_excess_ret_mkt — cross-sectional rank within in_universe
+    out.loc[out['in_universe'] == True, 'rank_rs_excess_ret_mkt'] = (
+        in_univ['rs_excess_ret_mkt'].rank(method='min', ascending=False).astype('Int64').values
+    )
 
     # FIP rerank — top 100 per metric
     for metric in RANK_METRICS:

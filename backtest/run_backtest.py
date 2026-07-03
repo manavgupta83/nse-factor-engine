@@ -93,7 +93,10 @@ else:
 
         for gate_id, score_id in CELLS:
             cell_id = f'{gate_id}_{score_id}'
-            port_df = get_portfolio(gate_id, score_id, signals, verbose=False)
+            # incumbents = symbols currently held by this cell (from prior week)
+            incumbent_symbols = set(cell_states[cell_id].holdings.keys())
+            port_df = get_portfolio(gate_id, score_id, signals, verbose=False,
+                                    incumbent_symbols=incumbent_symbols)
             top25   = port_df['symbol'].tolist() if not port_df.empty else []
             pv, act = cell_states[cell_id].rebalance(top25, px_T, pd.Timestamp(T), cell_id)
             portfolio_values[cell_id].append((T, pv))
