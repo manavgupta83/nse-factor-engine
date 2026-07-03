@@ -9,7 +9,7 @@ Output : signals/stage3/momentum_quality_signals_{AS_OF}.parquet
 Columns: symbol, as_of_date, fip_score, pct_pos_days, pct_neg_days,
          smoothness, proximity_52w_high, residual_momentum, rm_r2, rm_n_obs,
          industry_cum_ret, industry_rank, weinstein_stage2,
-         rs_excess_ret, rs_rank_500
+         rs_excess_ret_mkt, rs_rank_500
 """
 
 import sys
@@ -87,7 +87,7 @@ print("Computing Weinstein stage...")
 ws_df     = compute_weinstein(prices, T)
 
 print("Computing relative strength...")
-rs_df     = compute_relative_strength(window)
+rs_df     = compute_relative_strength(window, meta)
 
 # ── Assemble ─────────────────────────────────────────────────────────────────
 result = signals[['symbol']].copy()
@@ -113,7 +113,7 @@ print(result.isnull().sum().to_string())
 print("\n--- Distributions ---")
 for col in ['fip_score', 'pct_pos_days', 'pct_neg_days', 'smoothness',
             'proximity_52w_high', 'residual_momentum',
-            'industry_cum_ret', 'industry_rank', 'rs_excess_ret', 'rs_rank_500']:
+            'industry_cum_ret', 'industry_rank', 'rs_excess_ret_mkt', 'rs_excess_ret_industry', 'rs_rank_500']:
     print(f"\n{col}:")
     print(result[col].describe(percentiles=[.05, .25, .5, .75, .95]).to_string())
 

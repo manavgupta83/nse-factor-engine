@@ -26,6 +26,8 @@ RANK_METRICS = [
     "simple_vol_adj_momentum",
     "sharpe_style_momentum",
     "sortino_style_momentum",
+    "rs_excess_ret_mkt",
+    "rs_excess_ret_industry",
 ]
 
 

@@ -23,7 +23,7 @@ BASE = "/home/ec2-user/nse-factor-engine/"
 sys.path.insert(0, BASE + "signals/stage5/metrics")
 from in_universe import compute as compute_in_universe
 from cross_sectional_rank import compute as compute_rank, RANK_METRICS
-from fip_rerank import compute as compute_fip
+from fip_rerank import compute as compute_fip, RANK_METRICS as FIP_RANK_METRICS
 
 signals_files = glob.glob(BASE + "signals/final/momentum_signals_final_*.parquet")
 signals_files = [f for f in signals_files if "_pre_stage" not in f]
@@ -68,7 +68,7 @@ new_cols = set(merged.columns) - cols_before
 expected_new_cols = (
     {'in_universe', 'passes_mktcap', 'passes_adtv'}
     | {f'rank_{m}' for m in RANK_METRICS}
-    | {f'rank_fip_{m}' for m in RANK_METRICS}
+    | {f'rank_fip_{m}' for m in FIP_RANK_METRICS}
 )
 assert new_cols == expected_new_cols, f"Unexpected new columns: {new_cols ^ expected_new_cols}"
 assert len(merged) == n_full, f"Row count changed: expected {n_full} (full set retained), got {len(merged)}"
@@ -76,7 +76,7 @@ assert set(merged['symbol']) == set(signals['symbol']), "Symbol set changed -- r
 
 n_excluded = (merged['in_universe'] == False).sum()
 excluded_check = merged[merged['in_universe'] == False]
-rank_cols_check = [f'rank_{m}' for m in RANK_METRICS] + [f'rank_fip_{m}' for m in RANK_METRICS]
+rank_cols_check = [f'rank_{m}' for m in RANK_METRICS] + [f'rank_fip_{m}' for m in FIP_RANK_METRICS]
 assert excluded_check[rank_cols_check].isnull().all().all(), \
     "Excluded (non-investable) symbols unexpectedly have non-null rank values"
 print(f"Confirmed: {n_excluded} excluded symbols retained in output with all rank columns NaN")
