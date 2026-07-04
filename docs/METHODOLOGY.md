@@ -300,3 +300,608 @@ Sequences Stage 1 → 2 → 3 → 4 → 5 as subprocesses, in order, calling eac
 6. **`testing_shortlist.py` thresholds/weights are unvalidated.** Gate thresholds (`stpb_ret_21d > -5%`, `proximity_52w_high > 0.80`, etc.) and composite weights (30/20/20/15/15) were chosen by judgment during this session, explicitly pending backtest validation. See Stage 6 handover for the validation plan.
 7. **No exit strategy exists yet.** Per PDF Section 07 (Portfolio Construction), exit logic ("Weekly Review with Exit Rules," drawdown/regime triggers) is scoped for a future stage, not Stage 5. Needs "current holdings" as an input Stage 5 doesn't have — structurally a different computation (point-in-time retention check vs cross-sectional ranking), not a Stage 5 extension.
 8. **Methodology doc previously went stale relative to code** (discovered and corrected during Stage 5 build, 2026-06-30) — an earlier version of this file incorrectly described Stage 3's `residual_momentum` and 4 extension metrics as un-built TODOs, when the actual `stage3_assemble.py` on GitHub had them fully implemented. Verify against actual code (not just this doc) before trusting column lists, especially after long gaps between sessions.
+
+---
+
+## Stage 6 — Backtesting
+
+**Design session:** 2026-07-01. All decisions below were locked in the design chat before any code was written. The coding chat should treat every decision here as final unless explicitly reopened with the user.
+
+---
+
+### 6.1 Design Philosophy
+
+- Backtest is **self-contained** under `backtest/` — zero dependency on production `data/prices.parquet`, `universe/`, or `signals/`
+- **Survivorship bias is accepted** and documented as a known caveat. Getting 10yr survivorship-bias-free NSE data is impractical. Since all 25 strategy cells share the same bias, **relative rankings between cells are valid**; absolute return figures are not. This must be stated clearly in any output or report.
+- **RF = 0.07 static** across the full 10-year backtest period — consistent with Stage 2, justified because all 25 cells share the same constant (comparative validity preserved).
+
+---
+
+### 6.2 Strategy Grid
+
+Full factorial cross of 5 gate variants × 5 score variants = **25 strategy cells**. Every combination is run (no pruning). Each cell is identified by `cell_id` = `{gate_variant}_{score_variant}` (e.g. `G2_C4`).
+
+**Fixed parameters across all cells:**
+- Portfolio size N = 25
+- Tiebreaker at N cutoff = `proximity_52w_high` descending (config parameter — swappable without redesign)
+- Precondition (applies under every cell, not a variant): `in_universe = True`
+
+---
+
+### 6.3 Gate Variants (G-axis)
+
+| ID | Gates Applied | Hypothesis Being Tested |
+|---|---|---|
+| G1 | `in_universe` only | No additional gating adds value |
+| G2 | + `weinstein_stage2 = True` | Trend-stage confirmation is the dominant disqualifier |
+| G3 | + `stpb_ret_21d > -5%` AND `proximity_52w_high > 0.80` | Recent reversal + distance-from-high is the dominant disqualifier |
+| G4 | + `lottery_class not in {LOTTERY, BORDER_LOTTERY, EXTREME LOTTERY}` | Erratic-mover exclusion is the dominant disqualifier |
+| G5 | All of the above combined | Combined gating beats any single-axis gate |
+
+G5 is the full production gate set from `testing_shortlist.py`.
+
+---
+
+### 6.4 Score Variants (C-axis)
+
+| ID | Scoring Formula | Hypothesis Being Tested |
+|---|---|---|
+| C1 | `rank_ret_12m1m` alone | Raw 12M-1M return rank is sufficient; everything else is noise |
+| C2 | `rank_fip_ret_12m1m` alone | Path quality (FIP re-rank) beats raw magnitude as primary driver |
+| C3 | Average of `rank_sharpe_style_momentum` + `rank_sortino_style_momentum` | Risk-adjusting the signal (not gating, not FIP) is what matters |
+| C4 | Equal-weight composite: 20% each of (avg 3-momentum-ranks, FIP rank, RS rank, industry rank, proximity rank) | The specific 30/20/20/15/15 weights in C5 don't matter |
+| C5 | Weighted composite: 30% avg(3 momentum ranks) / 20% FIP / 20% RS / 15% industry / 15% proximity | Current production weights (testing_shortlist.py) |
+
+C5 is the production scoring formula from `testing_shortlist.py`.
+
+**Note on C2:** `rank_fip_ret_12m1m` is NaN for symbols outside the top-100 pool of `rank_ret_12m1m`. When C2 is used as the score, only symbols with a non-NaN FIP rank are eligible for selection — this pool is at most 100 in-universe symbols. This is correct and expected behaviour, not a bug.
+
+---
+
+### 6.5 Data Layer
+
+| Item | Detail |
+|---|---|
+| Source | Yahoo Finance (`.NS` suffix for NSE symbols) |
+| Symbols | ~1000 (list provided by user before coding begins) |
+| File | `backtest/data/prices_backtest.parquet` — OHLCV, all symbols, full 10yr history |
+| Benchmark | Nifty 500 price return index (`^CNTX` on Yahoo Finance), stored in `backtest/data/benchmark/nifty500_weekly.parquet` |
+| Period | 2015–2025 (10 years) |
+| Effective rebalance points | ~470 (first ~252 trading days consumed as warmup for signal computation) |
+| Decoupling | `prices_backtest.parquet` is fetched once in bulk — Stage 1 (incremental daily fetch) is NOT cloned into backtest |
+
+---
+
+### 6.6 Pipeline Clone
+
+Stages 2–5 signal logic is cloned into `backtest/pipeline/` and adapted for **historical T parametrisation** (each run takes a specific Friday date as T rather than resolving T from latest available data). The clone runs once per Friday in the backtest period (~470 times), producing one signals file per date in `backtest/signals/historical/signals_{DDMMYYYY}.parquet`.
+
+Each historical signals file has the same 49-column schema as production `momentum_signals_final_{DDMMYYYY}.parquet`.
+
+`backtest/pipeline/run_historical_pipeline.py` orchestrates the loop over all ~470 Fridays.
+
+---
+
+### 6.7 Weekly Rebalance Mechanics
+
+Rebalance fires every **Friday at close price**. If Friday is a market holiday, use the last available trading day that week.
+
+#### Step 1 — Pre-Rebalance State (Friday close, before trades)
+- `holdings` = {symbol: shares} carried from prior week
+- `cash_pool_carryover` = idle cash from prior weeks
+- `market_value_holdings` = Σ(shares × Friday close price) for all held symbols
+- `portfolio_value_pre` = `market_value_holdings + cash_pool_carryover`
+
+#### Step 2 — Signal Computation
+- Load Friday's signals file from `backtest/signals/historical/`
+- Apply gate variant → surviving pool
+- Apply score variant → ranked pool
+- Select top-25 by score (tiebreak: `proximity_52w_high` descending)
+- Derive: `exits` = in holdings but not in new top-25; `entries` = in new top-25 but not in holdings; `held` = in both
+
+#### Step 3 — Sell
+- Sell all exit symbols at Friday close
+- `sell_proceeds` = Σ(shares × Friday close price) for exit symbols
+- `available_cash` = `cash_pool_carryover + sell_proceeds`
+
+#### Step 4 — Allocation Cap Computation
+- `avg_held_value` = Σ(market value of held symbols) / count(held)
+- `cap_per_entry` = `min(available_cash / num_entries, avg_held_value)`
+- **Special case — week 1 or full turnover (no held positions):** `cap_per_entry = available_cash / num_entries` (no cap applied; full cash deployment)
+
+#### Step 5 — Buy
+- Buy each entry symbol at Friday close, spending exactly `cap_per_entry` per symbol
+- `cash_deployed` = `cap_per_entry × num_entries`
+
+#### Step 6 — Post-Rebalance State
+- `cash_pool_after` = `available_cash - cash_deployed`
+- `portfolio_value_post` = `market_value_of_held_positions + cash_deployed + cash_pool_after`
+- **Sanity check:** `portfolio_value_post` = `portfolio_value_pre` on rebalance day (no value created/destroyed by the rebalance itself — price moves occur between Fridays, not during execution) ✓
+
+#### Key design decisions
+- **Incremental rebalance** — only trade exits and entries; held positions untouched between rebalances
+- **Cash drag is modelled** — undeployed cash tracked in `cash_pool_after`, earns no return
+- **No borrowing** — `cash_deployed` can never exceed `available_cash`; allocation capped as above
+- **Equal-weight target** — new entrants receive equal allocation (capped), but held positions drift freely with price between rebalances; portfolio is not forced back to equal-weight on held names
+
+---
+
+### 6.8 Performance Metrics
+
+Computed per strategy cell (25 cells) and for the Nifty 500 benchmark in parallel.
+
+**Weekly return series** is the base input for all metrics:
+`weekly_return[t]` = `(portfolio_value_post[t] - portfolio_value_post[t-1]) / portfolio_value_post[t-1]`
+
+| Metric | Formula | Notes |
+|---|---|---|
+| CAGR | `(final_portfolio_value / initial_capital)^(1/10) - 1` | 10-year annualisation |
+| Sharpe | `(mean_weekly_return × 52 - RF) / (std_weekly_return × √52)` | RF = 0.07 static |
+| Sortino | `(mean_weekly_return × 52 - RF) / (downside_std_weekly × √52)` | downside_std uses negative weeks only |
+| Max DD | Largest peak-to-trough drop in cumulative portfolio value series | — |
+| DD Recovery | Weeks from trough to recovery of prior peak value | — |
+| Deflated Sharpe | Harvey & Liu (2015) multiple-testing adjustment for 25 strategies | **Flag only** — `sharpe_significant: True/False`. Does not exclude or penalise cells. |
+| Weeks ≥ 0% | Count of weeks with non-negative return | — |
+| Weeks -5% to 0% | Count of weeks with return in (-5%, 0%) | — |
+| Weeks -10% to -5% | Count of weeks with return in (-10%, -5%) | — |
+| Weeks -20% to -10% | Count of weeks with return in (-20%, -10%) | — |
+| Weeks < -20% | Count of weeks with return < -20% | — |
+| Alpha | `portfolio CAGR - benchmark CAGR` | Simple excess return, not regression-based |
+
+**Annualisation convention:** `×52` / `×√52` throughout (weekly data). Not `×252` — we track portfolio weekly, not daily. This means Sharpe/Sortino figures are **not directly comparable to mutual fund fact sheets** (which use daily NAV × √252). Acceptable given the purpose is inter-strategy comparison, not external benchmarking.
+
+---
+
+### 6.9 Benchmark Mechanics
+
+| Item | Decision |
+|---|---|
+| Index | Nifty 500 price return (`^CNTX` on Yahoo Finance) |
+| Return type | Price return only (no dividend reinvestment) |
+| Valuation point | Same Friday close as portfolio rebalance |
+| Outperformance metric | `Alpha = portfolio CAGR - Nifty 500 CAGR` (simple, not Jensen's Alpha) |
+| Same metrics computed | CAGR, Sharpe, Sortino, Max DD, DD Recovery, all DD weekly buckets |
+
+---
+
+### 6.10 Folder Structure
+
+```
+backtest/
+│
+├── data/
+│   ├── prices_backtest.parquet          # 10yr OHLCV, ~1000 symbols (Yahoo Finance)
+│   ├── universe_backtest.parquet        # symbol metadata (static snapshot)
+│   └── benchmark/
+│       └── nifty500_weekly.parquet      # Nifty 500 Friday closes, 2015-2025
+│
+├── pipeline/                            # cloned Stage 2-5 logic, parametrised for historical T
+│   ├── stage2_momentum.py
+│   ├── stage3_quality.py
+│   ├── stage4_filters.py
+│   ├── stage5_rank.py
+│   └── run_historical_pipeline.py       # loops over all ~470 Fridays
+│
+├── signals/
+│   └── historical/                      # one parquet per Friday (same 49-col schema as production)
+│       └── signals_{DDMMYYYY}.parquet
+│
+├── strategies/
+│   ├── config.py                        # G1-G5, C1-C5 definitions; N=25; tiebreaker; RF=0.07
+│   ├── gates.py                         # gate variant functions
+│   ├── scores.py                        # score variant functions
+│   └── engine.py                        # (gate_variant, score_variant) → top-25 for a signals file
+│
+├── simulation/
+│   ├── portfolio.py                     # portfolio state + rebalance mechanics (Step 1-6 above)
+│   └── run_simulation.py               # loops ~470 Fridays × 25 cells → weekly return series
+│
+├── metrics/
+│   └── compute_metrics.py              # all metrics in 6.8; benchmark parallel computation
+│
+├── results/
+│   ├── backtest_results_{DDMMYYYY}.parquet         # 25 rows × all summary metrics
+│   ├── backtest_weekly_returns_{DDMMYYYY}.parquet  # ~470 rows × 27 cols (25 cells + benchmark + date)
+│   └── backtest_portfolio_activity_{DDMMYYYY}.parquet  # ~290k rows: position-level audit trail
+│
+└── run_backtest.py                      # master orchestrator: pipeline → simulate → metrics → results
+```
+
+---
+
+### 6.11 Output File Schemas
+
+All three files dated with the backtest **run date** (IST), same convention as production pipeline. Produced once per full backtest run, not per rebalance week.
+
+**`backtest_results_{DDMMYYYY}.parquet`** — 25 rows
+
+| Column | Type | Description |
+|---|---|---|
+| `cell_id` | str | e.g. `G2_C4` |
+| `gate_variant` | str | G1–G5 |
+| `score_variant` | str | C1–C5 |
+| `cagr` | float | Annualised return |
+| `sharpe` | float | Annualised Sharpe |
+| `sortino` | float | Annualised Sortino |
+| `max_dd` | float | Max peak-to-trough (negative) |
+| `dd_recovery_weeks` | int | Weeks to recover from max DD |
+| `deflated_sharpe` | float | Harvey-Liu adjusted Sharpe |
+| `sharpe_significant` | bool | True if deflated Sharpe passes threshold |
+| `alpha` | float | Portfolio CAGR - Benchmark CAGR |
+| `weeks_positive` | int | Weeks with return ≥ 0% |
+| `weeks_dd_0_5` | int | Weeks with return in (-5%, 0%) |
+| `weeks_dd_5_10` | int | Weeks with return in (-10%, -5%) |
+| `weeks_dd_10_20` | int | Weeks with return in (-20%, -10%) |
+| `weeks_dd_gt20` | int | Weeks with return < -20% |
+| `benchmark_cagr` | float | Nifty 500 CAGR same period |
+| `total_weeks` | int | Effective rebalance weeks |
+| `initial_capital` | float | Starting capital |
+| `rf_rate` | float | 0.07 (static) |
+
+**`backtest_weekly_returns_{DDMMYYYY}.parquet`** — ~470 rows
+
+| Column | Type | Description |
+|---|---|---|
+| `friday_date` | date | Rebalance date |
+| `G1_C1` ... `G5_C5` | float | Weekly return per cell (25 columns) |
+| `benchmark` | float | Nifty 500 weekly return |
+
+**`backtest_portfolio_activity_{DDMMYYYY}.parquet`** — ~290,000 rows
+
+| Column | Type | Description |
+|---|---|---|
+| `friday_date` | date | Rebalance date |
+| `cell_id` | str | e.g. `G2_C4` |
+| `symbol` | str | Stock symbol |
+| `action` | str | `BUY` / `SELL` / `HOLD` |
+| `shares` | float | Shares transacted or held |
+| `price` | float | Friday close price |
+| `value` | float | `shares × price` |
+| `portfolio_value` | float | Total portfolio value post-rebalance |
+| `cash_pool` | float | Cash pool post-rebalance |
+
+---
+
+### 6.12 Known Caveats (Stage 6 specific)
+
+1. **Survivorship bias:** `prices_backtest.parquet` contains only symbols available today. Delisted, merged, or de-indexed stocks from 2015–2025 are absent. Absolute return figures are overstated. Relative rankings between cells remain valid (all cells share identical bias).
+2. **RF = 0.07 static:** actual Indian risk-free rate varied 4–8% across 2015–2025. Sharpe/Sortino figures are not comparable to any external source using a time-varying RF.
+3. **No transaction costs:** brokerage, STT, and impact cost are explicitly excluded from this round. Returns are gross of all friction. Transaction cost modelling deferred to a later stage.
+4. **No slippage model:** execution at Friday close price exactly. Real execution would be slightly above/below close.
+5. **Weekly portfolio valuation:** Sharpe/Sortino use ×52/×√52 annualisation, not ×252. Not comparable to mutual fund fact sheet figures (which use daily NAV).
+
+
+---
+
+## Stage 6 — As-Built Notes (append to existing Stage 6 section)
+
+**Completed:** 2026-07-02. All 6 phases production-verified.
+
+---
+
+### 6.A Deviations from Original Spec
+
+#### Benchmark Ticker
+- **Spec:** `^CNTX` (Nifty 500)
+- **As built:** `^CRSLDX` — `^CNTX` returned HTTP 404 on Yahoo Finance. `^CRSLDX` confirmed as correct Nifty 500 ticker.
+
+#### Backtest Period
+- **Spec:** 2015–2025, ~470 Fridays
+- **As built:** 2016-01-15 → 2026-06-19, **511 valid Fridays**
+- Price data extended to 2026-06-24 to include current year.
+- First valid T = 2016-01-15 (252 trading days of warmup consumed from 2015-01-01 start).
+
+#### Universe
+- **Spec:** ~1000 symbols
+- **As built:** 991 symbols successfully fetched. 8 failed (LTIM, GSPL, AKZOINDIA, SEQUENT, INFIBEAM, CIGNITITEC, SGLTL, SABTNL) — all delisted or renamed. Accepted per survivorship bias caveat.
+
+#### in_universe Gate
+- **Spec:** passes_mktcap AND passes_adtv
+- **As built:** passes_adtv only. All 991 symbols exceed 500cr market cap floor (confirmed — minimum market cap in NIFTY_1000.csv = 2,200cr). passes_mktcap check skipped as redundant.
+- **ADTV:** computed point-in-time from `prices_backtest.parquet` at each Friday T. 63-day rolling mean of close × volume / 1e7. Threshold: ≥ 10cr.
+
+#### Industry Classification
+- **Spec:** NSE industry classification (from universe_metadata.parquet)
+- **As built:** yfinance `sector` field. 11 categories (vs finer NSE classification). Stored in `universe_metadata_backtest.parquet`. Coarser groupings affect residual_momentum and leading_industry signals — documented caveat, accepted for backtest.
+
+#### Signal Columns — New Additions vs Production
+Two new RS columns added in backtest pipeline (not in production as of Stage 6):
+- `rs_excess_ret_mkt` = stock_cum_ret - equal_weighted_market_cum_ret (renamed from `rs_excess_ret`)
+- `rs_excess_ret_industry` = stock_cum_ret - industry_cum_ret (new)
+- Production pipeline update deferred to Stage 8.
+
+#### Memory Optimisation
+- Full price history (2M rows) caused OOM on t2.micro EC2 (916MB RAM).
+- **Fix:** pre-slice prices to 300 trading days ending at T before passing to `compute_signals()`. 300 > 252 (longest lookback), so no signal is affected.
+
+---
+
+### 6.B Pipeline Architecture (as built)
+
+Single function `compute_signals(px_window, meta, T)` in `backtest/pipeline/compute_signals.py` replicates all Stage 2–5 logic in-memory for arbitrary historical T. Called 511 times by `run_historical_pipeline.py`.
+
+Key design: no file I/O per iteration — prices and metadata loaded once, passed as DataFrames.
+
+---
+
+### 6.C Signal File Schema (49 columns)
+
+One parquet per Friday in `backtest/signals/historical/signals_{DDMMYYYY}.parquet`.
+
+| Group | Columns |
+|---|---|
+| Stage 2 — Momentum Core | symbol, as_of_date, ret_12m1m, ret_6m1m, ret_3m1m, vol_252, vol_231, downside_vol_252, downside_vol_231, simple_vol_adj_momentum, sharpe_style_momentum, sortino_style_momentum |
+| Stage 3 — Quality | fip_score, pct_pos_days, pct_neg_days, smoothness, proximity_52w_high, residual_momentum, rm_r2, rm_n_obs, industry_cum_ret, industry_rank, weinstein_stage2, rs_excess_ret_mkt, rs_excess_ret_industry, rs_rank_500 |
+| Stage 4 — Entry Filters | stpb_ret_21d, stpb_ret_7d, stpb_zscore_21d, stpb_zscore_7d, stpb_ma_distance_21d, vol_ratio_21_252, volume_price_pos_move_confirmed, days_bw_15_20perc, days_bw_10_15perc, days_bw_5_10perc, days_bw_2_5perc, lottery_class |
+| Stage 5 — Universe + Ranks | adtv_63_cr, passes_adtv, in_universe, rank_ret_12m1m, rank_simple_vol_adj_momentum, rank_sharpe_style_momentum, rank_sortino_style_momentum, rank_fip_ret_12m1m, rank_fip_simple_vol_adj_momentum, rank_fip_sharpe_style_momentum, rank_fip_sortino_style_momentum |
+
+---
+
+### 6.D Strategy Engine (as built)
+
+**`backtest/strategies/config.py`** — single source of truth for all locked decisions.
+**`backtest/strategies/gates.py`** — `apply_gate(gate_id, signals_df)` → filtered DataFrame.
+**`backtest/strategies/scores.py`** — `apply_score(score_id, survivors_df)` → top-N DataFrame.
+**`backtest/strategies/engine.py`** — `get_portfolio()` + `run_all_cells()` → long-format 625-row DataFrame per Friday.
+
+Scoring approach for C4/C5: all inputs re-ranked within survivor pool (post-gate) before weighting. Consistent with production `testing_shortlist.py`.
+
+---
+
+### 6.E Rebalance Mechanics (as built)
+
+Per §6.7 exactly. One `PortfolioState` object per cell, persists across all 511 Fridays.
+
+Edge cases handled:
+- `num_entries = 0` → Steps 4/5 skipped, cash stays in pool
+- Week 1 or full turnover (`count(held) = 0`) → `cap_per_entry = available_cash / num_entries` (no cap)
+- Symbol with no price at T → excluded from portfolio that week
+- `cash_deployed` ≤ `available_cash` always (no borrowing)
+
+Sanity check: `portfolio_value_post = portfolio_value_pre` on rebalance day (verified at runtime).
+
+---
+
+### 6.F Performance Metrics (as built)
+
+Per §6.8. CAGR uses fixed 10-year denominator per spec (actual period = 9.83 years — negligible difference).
+
+**Deflated Sharpe implementation note:** Bailey & López de Prado (2012) approximation used, not full Harvey & Liu (2015). Threshold = `sqrt(log(25) / 2) = 1.269`. Our 25 cells are highly correlated (same universe), so true H&L would give a lower threshold. Current implementation is conservative. Full H&L with correlation adjustment deferred to Stage 8.
+
+---
+
+### 6.G Backtest Results (run date 02072026)
+
+**Top 5 cells by Sharpe:**
+
+| Cell | CAGR | Sharpe | Sortino | MaxDD | DD Recovery | Alpha |
+|---|---|---|---|---|---|---|
+| G5_C1 | 36.73% | 1.24 | 1.72 | -30.40% | 61 weeks | 22.77% |
+| G3_C1 | 38.17% | 1.17 | 1.57 | -34.78% | 64 weeks | 24.21% |
+| G4_C1 | 37.61% | 1.16 | 1.56 | -34.73% | 64 weeks | 23.65% |
+| G5_C3 | 32.61% | 1.15 | 1.62 | -29.82% | 64 weeks | 18.65% |
+| G3_C3 | 35.63% | 1.14 | 1.54 | -34.01% | 23 weeks | 21.67% |
+
+**Benchmark (^CRSLDX / Nifty 500):**
+
+| CAGR | Sharpe | Sortino | MaxDD | DD Recovery |
+|---|---|---|---|---|
+| 13.96% | 0.47 | 0.64 | -34.39% | 29 weeks |
+
+**Key findings:**
+- All 25 cells outperform benchmark on CAGR and Sharpe
+- C1 (raw 12M-1M momentum rank) dominates — simple beats complex across all gate variants
+- G5 (strictest gate) consistently delivers lowest MaxDD
+- G3_C2 = worst cell (CAGR 4.33%, Sharpe -0.16) — G3 and C2 are contradictory filters
+- No cell clears deflated Sharpe threshold of 1.269 (G5_C1 at 1.24 is closest)
+- `sharpe_significant = False` for all 25 — expected given conservative threshold
+
+---
+
+### 6.H Data Files (not in GitHub — EC2 only)
+
+| File | Location | Size |
+|---|---|---|
+| prices_backtest.parquet | backtest/data/ | 45.2 MB |
+| universe_metadata_backtest.parquet | backtest/data/ | small |
+| nifty500_weekly.parquet | backtest/data/benchmark/ | small |
+| signals_{DDMMYYYY}.parquet × 511 | backtest/signals/historical/ | ~164KB each, ~82MB total |
+| backtest_results_02072026.parquet | backtest/results/ | <1 MB |
+| backtest_weekly_returns_02072026.parquet | backtest/results/ | 135 KB |
+| backtest_portfolio_activity_02072026.parquet | backtest/results/ | 5.8 MB |
+
+Parquets excluded from GitHub per `.gitignore`. All code committed at commit `74ae1f2`.
+---
+
+## Stage 6 — Deep Dive Analysis & Cell Selection (2026-07-04)
+
+**Input files:** `backtest_results_03072026.parquet`, `backtest_weekly_returns_03072026.parquet`, `backtest_portfolio_activity_03072026.parquet`
+
+**Cell grid tested (9 cells + benchmark):**
+`G2_C3`, `G2_C6`, `G4_C3`, `G4_C6`, `G4_C7`, `G5_C1`, `G6_C1`, `G6_C6`, `G6_C7`
+
+### Cell Selection Decision
+
+**Selected cell: G6_C6**
+
+Rationale summarised from full deep dive analysis:
+
+- G6 gate (Weinstein + no lottery + RS > 0) provides the cleanest quality filter — stocks must be in confirmed uptrend, non-erratic, AND beating the market
+- C6 score (rank_ret_12m1m + rank_rs_excess_ret_mkt with 1.2× incumbent boost) fills the identified RS signal gap while controlling churn via stickiness
+- RS signal (rs_excess_ret_mkt) was only ever tested buried in C4/C5 composites — C6 gives it a clean standalone test paired with raw momentum
+- Incumbent 1.2× multiplier reduces unnecessary turnover without sacrificing signal quality
+
+### Gates and Scores Tested
+
+**Gates:**
+- G2: `weinstein_stage2 = True`
+- G4: `lottery_class not in {LOTTERY, BORDER_LOTTERY, EXTREME_LOTTERY}`
+- G5: G2 + G3 + G4 (G3 = stpb_ret_21d > -5% AND proximity_52w_high ≥ 0.80)
+- G6 (NEW): `weinstein_stage2 = True` AND `lottery_class not in {LOTTERY, BORDER_LOTTERY, EXTREME_LOTTERY}` AND `rs_excess_ret_mkt > 0`
+
+**Scores:**
+- C1: `rank_ret_12m1m` only
+- C3: `avg(rank_sharpe_style_momentum, rank_sortino_style_momentum)`
+- C6 (NEW): `rank_ret_12m1m + rank_rs_excess_ret_mkt` with 1.2× multiplier on incumbents before top-N selection
+- C7 (NEW): `0.5 × rank_ret_12m1m + 0.5 × rank_rs_excess_ret_mkt` (no hysteresis)
+
+**G3 gate deprecated:** G3's proximity + stpb combination was shown to backfire in bear markets (ranked dead last in 2018-2020 bear). Not included in Stage 7 onwards.
+
+### Weinstein Stage 2 — Updated Definition (locked)
+
+Previous implementation (2 conditions) upgraded to 4 conditions:
+
+| # | Condition | Timeframe | Status |
+|---|---|---|---|
+| 1 | Weekly close > 30-week MA | Weekly | ✅ Existing |
+| 2 | 30-week MA slope positive (this week > last week) | Weekly | ✅ Existing |
+| 3 | 150-day SMA > 200-day SMA (MA fan-out) | Daily | ❌ NEW — add in Stage 7 |
+| 4 | Price > 50-day SMA | Daily | Explicitly excluded (see rationale) |
+
+**Rationale for excluding 50D SMA:** Entry gate only (not exit). Makes pool more restrictive on short-term momentum with no clear regime benefit. Decision locked.
+
+**Rationale for excluding 52w high proximity:** Previously in G3 gate. G3 deprecated. Not added to Weinstein — proximity backfires in bear markets (G3_C1 ranked last in 2018-2020 bear).
+
+---
+
+## Stage 7 — Portfolio Selection (G6_C6 Production Integration)
+
+**Script (to be built):** `signals/stage6/stage6_assemble.py`
+**Entry point added to:** `run_pipeline.py` after Stage 5
+
+Stage 7 integrates the selected G6_C6 cell into the production pipeline as a live portfolio selection stage. Starts from Stage 5 output.
+
+---
+
+### 7.1 Design Philosophy
+
+- Production portfolio selection = one cell only: **G6_C6**
+- No strategy grid — single path, deterministic output
+- Incumbent stickiness via C6's 1.2× multiplier — reduces churn without changing signal
+- Portfolio state is persisted between runs — required for incumbent identification
+- Output is actionable: BUY / HOLD / SELL per symbol
+
+---
+
+### 7.2 Gate: G6
+
+```
+G6 = in_universe = True
+     AND weinstein_stage2 = True
+     AND lottery_class not in {LOTTERY, BORDER_LOTTERY, EXTREME LOTTERY}
+     AND rs_excess_ret_mkt > 0
+```
+
+All conditions must be True simultaneously. `in_universe` is the prerequisite (applied first). Then Weinstein, then lottery exclusion, then RS positivity.
+
+If pool size < 25 after G6: deploy all available symbols (no partial fill with non-qualifying stocks). Note pool size in output. Stage 8 backlog item: Nifty 500 Weinstein overlay will address systematic sub-25 handling.
+
+---
+
+### 7.3 Score: C6
+
+```
+c6_raw    = rank_ret_12m1m + rank_rs_excess_ret_mkt
+c6_score  = c6_raw / 1.2   if symbol in current_portfolio
+            c6_raw          otherwise
+```
+
+Lower c6_score = better (both rank components are ascending toward rank 1 = best).
+
+Dividing incumbents' score by 1.2 lowers their numeric score, making them harder to displace. A new candidate must have a c6_raw at least 16.7% better than the incumbent's c6_raw to displace them.
+
+Tiebreaker: `proximity_52w_high` descending.
+
+**NaN handling:** symbols with NaN in `rank_ret_12m1m` or `rank_rs_excess_ret_mkt` are excluded from selection. These are typically recent listings without full 252-day history.
+
+---
+
+### 7.4 Portfolio State
+
+**File:** `portfolio/portfolio_state.parquet`
+
+| Column | Type | Description |
+|---|---|---|
+| `symbol` | str | Stock symbol |
+| `shares` | float | Shares currently held |
+| `entry_date` | date | Date first entered portfolio |
+| `entry_price` | float | Price at entry |
+| `last_rebalance_date` | date | Last Friday position was confirmed |
+
+**First run:** If file does not exist, `current_holdings = {}`. No incumbent boost. File created after first run.
+
+---
+
+### 7.5 Output
+
+**File:** `signals/stage6/portfolio_recommendations_{DDMMYYYY}.parquet`
+
+| Column | Type | Description |
+|---|---|---|
+| `symbol` | str | Stock symbol |
+| `action` | str | BUY / HOLD / SELL |
+| `c6_score` | float | Final C6 score (post incumbent adjustment) |
+| `c6_raw` | float | Pre-adjustment score |
+| `rank_ret_12m1m` | Int64 | Momentum rank |
+| `rank_rs_excess_ret_mkt` | Int64 | RS rank |
+| `rs_excess_ret_mkt` | float | Raw RS vs market |
+| `ret_12m1m` | float | Raw 12M-1M return |
+| `proximity_52w_high` | float | Tiebreaker value |
+| `weinstein_stage2` | bool | Gate condition 1 |
+| `lottery_class` | str | Gate condition 2 |
+| `incumbent_boost_applied` | bool | Whether 1.2× applied |
+| `as_of_date` | date | T from signals file |
+| `run_date` | date | IST date pipeline ran |
+| `pool_size_post_gate` | int | Number of symbols that passed G6 (before top-N cut) |
+
+---
+
+### 7.6 Folder Structure (Stage 7 additions)
+
+```
+signals/
+└── stage6/
+    ├── stage6_assemble.py          # master entry point
+    └── metrics/
+        ├── g6_gate.py              # apply_g6_gate(signals_df) → filtered_df
+        └── c6_score.py             # apply_c6_score(filtered_df, current_holdings) → ranked_df
+
+portfolio/
+├── portfolio_state.parquet         # current holdings (persisted between runs)
+└── portfolio_history/
+    └── portfolio_{DDMMYYYY}.parquet  # point-in-time snapshot per run (audit trail)
+```
+
+---
+
+### 7.7 Integration into run_pipeline.py
+
+New stage added after Stage 5:
+
+```python
+run_stage(
+    "STAGE 6 — Portfolio Selection (G6_C6)",
+    BASE / "signals" / "stage6" / "stage6_assemble.py",
+)
+```
+
+---
+
+### 7.8 Pre-Stage 7 Checklist
+
+In this order before writing stage6_assemble.py:
+
+1. Update `signals/stage3/metrics/weinstein.py` — add 150D SMA > 200D SMA condition
+2. Verify `rank_rs_excess_ret_mkt` column present in latest Stage 5 output
+3. Confirm NaN handling in signal columns
+4. Decide sub-25 pool behaviour (current decision: deploy all available)
+
+---
+
+### 7.9 Known Caveats (Stage 7 specific)
+
+1. **No transaction costs modelled in backtest** — real-world friction will reduce returns. G6_C6's incumbent stickiness partially mitigates this via lower churn.
+2. **Sub-25 pool in stress periods** — G6's strict gates (especially RS > 0) will thin the pool during market crashes. Seen historically in Feb-Apr 2016, Oct 2018, Mar-Jun 2020. Stage 8 Nifty 500 regime overlay will address this.
+3. **Incumbent boost is untested in live deployment** — the 1.2× multiplier was part of the C6 backtest design but its exact real-world churn impact depends on portfolio state persistence working correctly.
+4. **Weinstein update (150D > 200D)** changes the production signal from the backtest signal — backtest used the older 2-condition Weinstein. First few weeks of live deployment may show slightly different pools than backtest history suggested.
+
