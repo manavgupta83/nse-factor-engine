@@ -14,3 +14,8 @@ signals/stage5/*.parquet
 signals/stage5/intermediate/*.parquet
 signals/stage5/intermediate/*.csv
 manual_backups/
+backtest/data/
+backtest/results/
+backtest/signals/
+backtest/*.log
+backtest/simulation/*.log
