@@ -66,7 +66,7 @@ merged = merged.merge(fip_result, on='symbol', how='left')
 
 new_cols = set(merged.columns) - cols_before
 expected_new_cols = (
-    {'in_universe', 'passes_mktcap', 'passes_adtv'}
+    {'in_universe', 'passes_mktcap', 'passes_adtv', 'market_cap_cr', 'adtv_63_cr'}
     | {f'rank_{m}' for m in RANK_METRICS}
     | {f'rank_fip_{m}' for m in FIP_RANK_METRICS}
 )

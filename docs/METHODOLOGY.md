@@ -165,20 +165,22 @@ Formation window for most metrics: `T-252 → T-21` (same as Stage 2's vol_231 w
 
 | Condition | Label |
 |---|---|
-| days_bw_15_20perc > 2 | EXTREME LOTTERY |
+| days_bw_15_20perc > 2 | EXTREME_LOTTERY |
 | days_bw_15_20perc > 0 | LOTTERY |
 | days_bw_10_15perc > 0 | BORDER_LOTTERY |
 | days_bw_5_10perc > 0 | CAUTIOUS |
 | days_bw_2_5perc > 0 | ALRIGHT |
 | (none of the above) | BORING |
 
-**IMPORTANT — asymmetric threshold, confirmed intentional.** Only the top tier (EXTREME LOTTERY) requires more than 2 qualifying days; every other tier triggers on a single occurrence. One isolated extreme day is enough to classify a stock as LOTTERY, but it takes 3+ such days to escalate to EXTREME LOTTERY.
+**Spelling correction (Stage 7, 2026-07):** the label was `EXTREME LOTTERY` (space) in all production code prior to Stage 7 — inconsistent with the locked-definitions convention (underscore) used everywhere else. Fixed in `signals/stage4/metrics/daily_return_magnitude.py` and `signals/stage4/stage4_step3_test_lottery.py`. **Not fixed in `backtest/pipeline/compute_signals.py`** — backtest scope explicitly excluded from this fix per user decision ("backtest is done and dusted and forgotten"); that file still uses the space variant. Do not assume production and backtest share this spelling — they currently do not.
+
+**IMPORTANT — asymmetric threshold, confirmed intentional.** Only the top tier (EXTREME_LOTTERY) requires more than 2 qualifying days; every other tier triggers on a single occurrence. One isolated extreme day is enough to classify a stock as LOTTERY, but it takes 3+ such days to escalate to EXTREME_LOTTERY.
 
 **Window construction note:** the 63-day return series requires 64 trading days of close prices (T-64→T); the anchor day (T-64) itself produces no return observation and is excluded from bucket counts, leaving exactly 63 return-days per symbol.
 
 **Known limitation — VEDL, not logged as a known issue (explicit decision).** VEDL's `lottery_class` = LOTTERY (at T=2026-06-25) is driven in part by a single contaminated day: the 2026-04-30 split shows as a ~65% single-day "return" (close ₹773.60 → ₹271.55), registering in `days_bw_15_20perc`. Same root cause as KI-001/KI-002 but explicitly decided NOT to be patched or separately logged — VEDL's lottery classification should be read with this in mind, output left as computed.
 
-**Empirical result at T=2026-06-25:** 0 symbols in EXTREME LOTTERY, 36 in LOTTERY, 66 in BORDER_LOTTERY, 340 in CAUTIOUS, 58 in ALRIGHT, 0 in BORING. (Distribution will shift run to run as T advances; this is a point-in-time snapshot, not a fixed expectation.)
+**Empirical result at T=2026-06-25:** 0 symbols in EXTREME_LOTTERY, 36 in LOTTERY, 66 in BORDER_LOTTERY, 340 in CAUTIOUS, 58 in ALRIGHT, 0 in BORING. (Distribution will shift run to run as T advances; this is a point-in-time snapshot, not a fixed expectation.)
 
 ### Stage 4 Cross-cutting notes
 
@@ -192,11 +194,13 @@ Formation window for most metrics: `T-252 → T-21` (same as Stage 2's vol_231 w
 
 **Scripts:** `signals/stage5/metrics/in_universe.py`, `signals/stage5/metrics/cross_sectional_rank.py`, `signals/stage5/metrics/fip_rerank.py`, `signals/stage5/stage5_assemble.py`
 
-First stage to close the `in_universe` gap flagged since Stage 1. Closes it, then ranks the investable universe and re-ranks by FIP quality. Output is **additive only** — all 500 original rows and all 38 pre-existing columns are preserved unchanged; Stage 5 adds 11 new columns and writes nothing else away.
+First stage to close the `in_universe` gap flagged since Stage 1. Closes it, then ranks the investable universe and re-ranks by FIP quality. Output is **additive only** — all 500 original rows and all 38 pre-existing columns are preserved unchanged; Stage 5 adds new columns and writes nothing else away.
 
 ### 5.1 in_universe merge (prerequisite gate)
 
 Loads `universe/universe_{run_date}.parquet` and merges `in_universe`, `passes_mktcap`, `passes_adtv` onto the signals file.
+
+**Stage 7 addition (2026-07):** also merges `market_cap_cr` and `adtv_63_cr` through onto the signals file. These existed in `universe_{DDMMYYYY}.parquet` from Stage 1 but were previously dropped in this merge step — never carried downstream. Fixed at source in `in_universe.py` (not patched downstream) so any future consumer gets them for free. `stage5_assemble.py`'s `expected_new_cols` assert updated accordingly.
 
 **Filename vs data-date convention (locked 2026-06-30) — applies pipeline-wide, not just Stage 5:** every dated output file (`universe_*.parquet`, `momentum_signals_final_*.parquet`, etc.) is named using **RUN_DATE** — the IST calendar date the pipeline actually executed — **not T**. T is recorded separately as the `as_of_date` column inside each file and can lag RUN_DATE (e.g. a run on June 30 can produce `as_of_date = 2026-06-29` if June 30's full data wasn't yet available at fetch time). Filename tells you *when this ran*; `as_of_date` tells you *what trading day the data represents*. The two are never assumed to match.
 
@@ -219,6 +223,8 @@ Loads `universe/universe_{run_date}.parquet` and merges `in_universe`, `passes_m
 
 Convention: rank 1 = best (highest value, descending), ties via `method='min'`, computed independently per metric — no averaging or combining across the 4.
 
+Also includes cross-sectional ranks on the RS extension columns (`rank_rs_excess_ret_mkt`, `rank_rs_excess_ret_industry`) — required for Stage 7's C6 score.
+
 **Decile sizing — design conflict identified and resolved (locked 2026-06-30):** the PDF's literal spec ("top decile... 90th percentile") and its literal "top 100 → final 50" numbers are mutually inconsistent once sized against the actual investable universe (~496, not 500) — a true 10% decile is ~45-49 names, smaller than both 100 and 50. **Resolved by dropping the percentile/decile framing entirely** in favor of the PDF's explicit fixed numbers: rank by return, take a fixed top 100 (not scaled to universe size), then FIP re-rank narrows to (up to) 50. The word "decile" in the PDF is treated as superseded by the literal 100/50 figures it also specifies.
 
 **Verified at T=2026-06-30:** 496 in-universe symbols ranked on all 4 metrics. 21 symbols (same 21 across all 4 metrics — all `ret_12m1m`-dependent) have null inputs and rank as NaN; likely recent listings without full 252-day history.
@@ -240,7 +246,8 @@ PDF spec: "Avoid January rebalance. Momentum weakest in January due to tax-loss 
 ### Stage 5 Cross-cutting notes
 
 - **Assembler row-count invariant:** `stage5_assemble.py` asserts the output row count equals the input row count exactly, and that the symbol set is unchanged — guards against the earlier (corrected) design where non-investable symbols were silently dropped.
-- **Determinism verified:** re-running `run_pipeline.py` end-to-end against the same T produced byte-identical Stage 5 output (all 11 new columns, all 500 symbols) on a second invocation the same day.
+- **Determinism verified:** re-running `run_pipeline.py` end-to-end against the same T produced byte-identical Stage 5 output (all new columns, all 500 symbols) on a second invocation the same day.
+- **Idempotency gap (found Stage 7, 2026-07):** `stage5_assemble.py` assumes it is always merging Stage 1's universe output onto a *fresh* Stage 2-4 file that has never been through Stage 5 before. Rerunning Stage 5 a second time directly on its own already-processed output (without restoring the `_pre_stage5_backup.parquet`) causes a merge column collision (`in_universe` meets an existing `in_universe`, pandas auto-suffixes both away) and the script's own `in_universe` null-check assert fails with a `KeyError` rather than a clear message. Not fixed — noted as a real gap. Workaround: restore the `_pre_stage5_backup.parquet` file as input before any standalone Stage 5 rerun on the same date.
 - **`testing_shortlist.py`** (`signals/stage5/testing_shortlist.py`) — **experimental, not a production pipeline component, not part of `stage5_assemble.py` or `run_pipeline.py`.** A standalone gate-then-composite-score prototype combining `in_universe`, `weinstein_stage2`, `stpb_ret_21d`, `stpb_ma_distance_21d`, `lottery_class`, `proximity_52w_high` as hard gates, then a weighted composite (30% momentum rank avg / 20% FIP / 20% RS / 15% industry / 15% proximity) to produce a top-20 shortlist. Built to explore the "rank-1-on-everything but structurally broken" failure mode surfaced by NATIONALUM (elite `ret_12m1m`/`rs_rank_500`/FIP ranks, but `weinstein_stage2=False` and `stpb_ret_21d=-19.8%` — a rolled-over former leader). **Explicitly flagged as needing backtest validation before any thresholds, weights, or the gate/score split itself are trusted** — see Stage 6 handover for what to test.
 
 ---
@@ -251,12 +258,14 @@ PDF spec: "Avoid January rebalance. Momentum weakest in January due to tax-loss 
 
 Sequences Stage 1 → 2 → 3 → 4 → 5 as subprocesses, in order, calling each stage's existing entry-point script unmodified (except `universe/run_universe.py`'s output filename format, see below). Does not reimplement any stage's internal logic.
 
-**Entry points invoked, in order:**
+**Entry points invoked, in order (as of Stage 5):**
 1. `universe/run_universe.py` (Stage 1)
 2. `signals/stage2/stage2_step5_assemble.py` (Stage 2)
 3. `signals/stage3/stage3_assemble.py` (Stage 3)
 4. `signals/stage4/stage4_assemble.py` (Stage 4)
 5. `signals/stage5/stage5_assemble.py` (Stage 5, added 2026-06-30)
+
+**Stage 7 addition (2026-07):** a sixth entry point, `signals/stage6/stage6_assemble.py`, was added after Stage 5, using the exact same `run_stage()` wrapper as every other stage — no changes to the orchestration mechanism itself. See Stage 7 as-built notes below for detail.
 
 **Design decisions:**
 
@@ -272,11 +281,11 @@ Sequences Stage 1 → 2 → 3 → 4 → 5 as subprocesses, in order, calling eac
 
 - **Logging:** every run writes a timestamped log to `logs/master_run_{YYYYMMDD_HHMMSS}.log`, capturing all stdout/stderr from every stage plus the master script's own status messages.
 
-- **Halt-on-failure:** any stage returning non-zero exit code immediately halts the pipeline, with the failing stage and exit code logged.
+- **Halt-on-failure:** any stage returning non-zero exit code immediately halts the pipeline, with the failing stage and exit code logged. Confirmed this correctly does NOT fire on Stage 6's same-cycle no-op path (`sys.exit(0)` is treated as success).
 
 **Resolved gap (was open at time of original writing):** `in_universe` (Stage 1) is now applied in Stage 5 — see Stage 5 section above. Stages 2-4 still operate on the full ~500-symbol universe by design; Stage 5 is where filtering scope first applies.
 
-**Verified:** end-to-end run on 2026-06-30 (IST), Stage 1 through Stage 5, produced `signals/final/momentum_signals_final_30062026.parquet` — 500 rows, 49 columns (38 pre-Stage-5 + 11 new), `as_of_date` = 2026-06-30. Re-run same day reproduced byte-identical output.
+**Verified:** end-to-end run on 2026-06-30 (IST), Stage 1 through Stage 5, produced `signals/final/momentum_signals_final_30062026.parquet` — 500 rows, 49 columns (38 pre-Stage-5 + 11 new), `as_of_date` = 2026-06-30. Re-run same day reproduced byte-identical output. **Re-verified Stage 7 (2026-07-05):** full Stage 1-6 run (including live price fetch) completed end-to-end, exit code 0.
 
 ---
 
@@ -298,8 +307,8 @@ Sequences Stage 1 → 2 → 3 → 4 → 5 as subprocesses, in order, calling eac
 4. **VEDL lottery-classifier contamination** (Section 4.3) — explicitly left unpatched and undocumented as a formal known issue, per user decision.
 5. **No "final 50" selection materialized.** Stage 5 produces 4 parallel top-100-then-FIP-ranked tracks but no single combined/intersected "these are the 50 stocks to buy" output. This is intentional per current scope, but means Stage 5's output is still an intermediate ranking artifact, not a portfolio.
 6. **`testing_shortlist.py` thresholds/weights are unvalidated.** Gate thresholds (`stpb_ret_21d > -5%`, `proximity_52w_high > 0.80`, etc.) and composite weights (30/20/20/15/15) were chosen by judgment during this session, explicitly pending backtest validation. See Stage 6 handover for the validation plan.
-7. **No exit strategy exists yet.** Per PDF Section 07 (Portfolio Construction), exit logic ("Weekly Review with Exit Rules," drawdown/regime triggers) is scoped for a future stage, not Stage 5. Needs "current holdings" as an input Stage 5 doesn't have — structurally a different computation (point-in-time retention check vs cross-sectional ranking), not a Stage 5 extension.
-8. **Methodology doc previously went stale relative to code** (discovered and corrected during Stage 5 build, 2026-06-30) — an earlier version of this file incorrectly described Stage 3's `residual_momentum` and 4 extension metrics as un-built TODOs, when the actual `stage3_assemble.py` on GitHub had them fully implemented. Verify against actual code (not just this doc) before trusting column lists, especially after long gaps between sessions.
+7. ~~No exit strategy exists yet~~ — **RESOLVED in Stage 7.** `signals/stage6/stage6_assemble.py` computes SELL as `(current_holdings − new TOP_25)`, using the persisted `portfolio/portfolio_state.parquet` as the "current holdings" input this item originally flagged as missing.
+8. **Methodology doc previously went stale relative to code** (discovered and corrected during Stage 5 build, 2026-06-30) — an earlier version of this file incorrectly described Stage 3's `residual_momentum` and 4 extension metrics as un-built TODOs, when the actual `stage3_assemble.py` on GitHub had them fully implemented. Verify against actual code (not just this doc) before trusting column lists, especially after long gaps between sessions. **Recurred in Stage 7:** the Stage 7 handover's pre-work checklist asked to "add" the Weinstein 150D/200D SMA condition — it was found already implemented when the actual file was checked. Same lesson, same fix (verify code directly, don't trust the doc/handover alone).
 
 ---
 
@@ -339,6 +348,8 @@ Full factorial cross of 5 gate variants × 5 score variants = **25 strategy cell
 | G5 | All of the above combined | Combined gating beats any single-axis gate |
 
 G5 is the full production gate set from `testing_shortlist.py`.
+
+*(Note: this table reflects the backtest's actual literal implementation, which still uses the `EXTREME LOTTERY` space-spelling — backtest code was not touched by the Stage 7 spelling fix. See Section 4.3 for the production spelling correction.)*
 
 ---
 
@@ -608,7 +619,7 @@ All three files dated with the backtest **run date** (IST), same convention as p
 Two new RS columns added in backtest pipeline (not in production as of Stage 6):
 - `rs_excess_ret_mkt` = stock_cum_ret - equal_weighted_market_cum_ret (renamed from `rs_excess_ret`)
 - `rs_excess_ret_industry` = stock_cum_ret - industry_cum_ret (new)
-- Production pipeline update deferred to Stage 8.
+- Production pipeline update deferred to Stage 8. **Update (Stage 7):** `rs_excess_ret_mkt` and `rs_excess_ret_industry` are both confirmed present in live production Stage 5 output as of 2026-07 — appears to have been picked up already. Not independently re-verified with a dedicated check; confirm before treating as fully closed.
 
 #### Memory Optimisation
 - Full price history (2M rows) caused OOM on t2.micro EC2 (916MB RAM).
@@ -755,7 +766,7 @@ Previous implementation (2 conditions) upgraded to 4 conditions:
 |---|---|---|---|
 | 1 | Weekly close > 30-week MA | Weekly | ✅ Existing |
 | 2 | 30-week MA slope positive (this week > last week) | Weekly | ✅ Existing |
-| 3 | 150-day SMA > 200-day SMA (MA fan-out) | Daily | ❌ NEW — add in Stage 7 |
+| 3 | 150-day SMA > 200-day SMA (MA fan-out) | Daily | ✅ Confirmed already implemented (Stage 7 — see 7.A) |
 | 4 | Price > 50-day SMA | Daily | Explicitly excluded (see rationale) |
 
 **Rationale for excluding 50D SMA:** Entry gate only (not exit). Makes pool more restrictive on short-term momentum with no clear regime benefit. Decision locked.
@@ -770,6 +781,8 @@ Previous implementation (2 conditions) upgraded to 4 conditions:
 **Entry point added to:** `run_pipeline.py` after Stage 5
 
 Stage 7 integrates the selected G6_C6 cell into the production pipeline as a live portfolio selection stage. Starts from Stage 5 output.
+
+*(This section — 7.1 through 7.9 — is preserved as originally written, the locked pre-build design. Actual as-built behaviour, deviations, and verification results are documented in Section 7.A onward, mirroring the Stage 6 spec/as-built pattern above.)*
 
 ---
 
@@ -905,3 +918,83 @@ In this order before writing stage6_assemble.py:
 3. **Incumbent boost is untested in live deployment** — the 1.2× multiplier was part of the C6 backtest design but its exact real-world churn impact depends on portfolio state persistence working correctly.
 4. **Weinstein update (150D > 200D)** changes the production signal from the backtest signal — backtest used the older 2-condition Weinstein. First few weeks of live deployment may show slightly different pools than backtest history suggested.
 
+---
+
+## Stage 7 — As-Built Notes (append to existing Stage 7 section)
+
+**Completed:** 2026-07-05. Verified end-to-end including a genuine week-over-week cycle with real incumbent boost and hysteresis behavior confirmed. Full detail, open questions, and locked backlog status for what comes next: see `docs/STAGE_8_HANDOVER.md` (companion document — not duplicated here).
+
+---
+
+### 7.A Deviations from Original Spec
+
+- **Weinstein 150D/200D SMA condition (§7.8, item 1):** spec called for this to be added in Stage 7. Found **already implemented** in `signals/stage3/metrics/weinstein.py` before any Stage 7 coding began — full file reviewed, all 3 conditions (including 150D>200D) confirmed correctly combined with AND logic, condition 4 (Price > 50D SMA) correctly absent. No code change was needed for this item — the handover's checklist was stale on this point.
+- **lottery_class spelling (§7.2):** original spec shows `EXTREME LOTTERY` (space), matching the bug that existed in production code at the time this section was first written. Fixed during Stage 7 to `EXTREME_LOTTERY` (underscore) in `daily_return_magnitude.py`, `stage4_step3_test_lottery.py`, and this doc's Section 4.3. `g6_gate.py` (as built) uses the corrected underscore spelling. **`backtest/pipeline/compute_signals.py` deliberately NOT fixed** — backtest scope excluded per explicit user decision. Do not assume backtest and production share this spelling.
+- **Portfolio State schema simplified (§7.4):** original spec listed `shares, entry_date, entry_price, last_rebalance_date`. **As built:** `symbol, last_rebalance_date` only. Explicit user decision — Stage 6 (production) is a recommendation engine only, no execution/shares/price tracking; assumes full compliance with the prior week's TOP_25 recommendation. "What I do with system recommendation is on me, not system's liability."
+- **`last_rebalance_date` semantics:** stores Stage 5's `as_of_date` (T), NOT the script's wall-clock `run_date`. This distinction is what enables the same-cycle rerun guard (§7.C) — not present in the original spec at all.
+- **Output width (§7.5):** `DISPLAY_N = 50` added (TOP_25 + REST), beyond the original spec's implicit top-25-only output. Actual gate/hysteresis logic still uses `N = 25` exclusively — the extra 25 rows (`tier = REST`) are for user-side analysis only, never part of deployed selection or SELL/HOLD/BUY logic.
+- **`pool_size_post_gate` (spec) → `g6_pool_size` (as built):** same concept, renamed. Raw G6-gate-pass count, computed pre-NaN-drop, stamped on every output row.
+- **`market_cap_cr` / `adtv_63_cr` added to output** — not in original spec. Added mid-Stage-7 on user request. Required extending `signals/stage5/metrics/in_universe.py` (was silently dropping these two columns on the way from `universe_{DDMMYYYY}.parquet` into Stage 5 output), plus `stage5_assemble.py`'s `expected_new_cols` assert and `stage6_assemble.py`'s `merge_cols`.
+- **Action set extended:** spec's `BUY / HOLD / SELL` (§7.5) became `BUY / HOLD / WATCHLIST` as row-level values in the output file. `SELL` is derived and logged to console, not stamped as a row value — by definition, a SELL symbol is absent from the new TOP_25/REST output (it only exists in the *prior* `portfolio_state.parquet`), so there is no row to attach the label to.
+
+---
+
+### 7.B As-Built Schema
+
+**`portfolio/portfolio_state.parquet`** (simplified — see 7.A)
+
+| Column | Type | Description |
+|---|---|---|
+| `symbol` | str | Stock symbol (TOP_25 only) |
+| `last_rebalance_date` | date | Stage 5's `as_of_date` (T) this state was computed for — NOT wall-clock run_date |
+
+**`signals/stage6/portfolio_recommendations_{DDMMYYYY}.parquet`** — 50 rows (TOP_25 + REST)
+
+All Stage 5 output columns (55, including the `market_cap_cr`/`adtv_63_cr` addition from 7.A) are merged through for context, plus 7 Stage 6-native columns:
+
+| Column | Type | Description |
+|---|---|---|
+| `c6_raw` | float | Pre-incumbent-boost composite score |
+| `incumbent_boost_applied` | bool | Whether the 1.2× divisor was applied |
+| `c6_score` | float | Final score, post-boost — this is what drives sort order |
+| `tier` | str | `TOP_25` (rank ≤25) or `REST` (rank 26-50) |
+| `g6_pool_size` | int | Raw G6-gate-pass count (pre-NaN-drop), same value on every row |
+| `action` | str | `BUY` / `HOLD` (tier=TOP_25) or `WATCHLIST` (tier=REST) |
+| `run_date` | date | IST wall-clock date the script executed |
+
+**Sub-25 degradation (verified via synthetic test):** if the G6-gate pool has fewer than 25 rows, `.head(50)` naturally returns all available rows, and the `tier` assignment (`'TOP_25' if i < 25 else 'REST'`) means every row becomes `TOP_25` with zero `REST` — no special-casing required, confirmed via a synthetic 9-row test.
+
+---
+
+### 7.C Same-Cycle Rerun Guard (new mechanism, not in original spec)
+
+- Compares the incoming Stage 5 `as_of_date` (T) against the stored `last_rebalance_date` in `portfolio_state.parquet`.
+- If equal: prints a message, exits cleanly (`sys.exit(0)`), and writes **nothing** — no recommendations file, no state update, no history snapshot.
+- Purpose: prevents duplicate processing and false hysteresis suppression when `stage6_assemble.py` is rerun against signal data that hasn't actually advanced (e.g. rerun same day after a bug fix).
+- Verified twice: correctly no-ops when `as_of_date` is unchanged; correctly proceeds when `as_of_date` advances to a new trading day (04072026 → 05072026 test, see 7.D).
+- `run_pipeline.py`'s `run_stage()` correctly treats the guard's `sys.exit(0)` as success — does not halt the pipeline.
+
+---
+
+### 7.D Verification Log (production, live data)
+
+- G6 gate pool size on live data: 96 (run 04072026), 101 (run 05072026) — both well above N=25. Sub-25 fallback logic confirmed correct via synthetic test only; not yet triggered on real data.
+- Incumbent boost confirmed **structurally active**, not merely present: on the 05072026 run, SCHNEIDER (`c6_raw = 95`) would have been displaced by 4 non-incumbent candidates with better raw scores (84, 86, 92, 92) without the 1.2× boost. With the boost (`95 / 1.2 = 79.17`), it correctly stayed in TOP_25. Zero week-over-week turnover that cycle reflects the boost working as intended, not the boost being irrelevant.
+- `c6_raw` (pre-boost) vs `c6_score` (post-boost, actually used for sort/rank) — naming and usage confirmed correct against live output.
+- Full `run_pipeline.py` run, Stages 1 through 6 including a live price fetch, completed end-to-end with exit code 0.
+- `market_cap_cr` / `adtv_63_cr` passthrough (7.A) verified end-to-end on a genuine new cycle — both columns present, zero nulls.
+
+---
+
+### 7.E Known Observations (not blocking, carry forward to Stage 8)
+
+- **Intermittent interpreter-exit crash:** `terminate called ... Aborted (core dumped)` observed at Python interpreter exit, specifically immediately after `sys.exit(0)` following parquet I/O in `stage6_assemble.py`. Confirmed shell exit code remains `0` in every observed case — does **not** trigger `run_pipeline.py`'s failure-halt logic (`returncode != 0`). Suspected pyarrow 21.0.0 native cleanup behaviour on this box (Python 3.9, t2/t3.micro). Not reproduced on every run. Worth watching if it starts appearing mid-run rather than only at exit, on any stage.
+- **Backlog items 2/3 (§6.A) appear already done:** `rs_excess_ret_mkt` and `rs_excess_ret_industry` both confirmed present in live production Stage 5 output. **Backlog item 4 (`stock_cum_ret` in final output) appears still outstanding** — not seen in the live column list. None of this was independently re-verified with a dedicated check this session; confirm before treating as closed.
+
+---
+
+### 7.F Stage 8 — Deferred Scope (summary; full detail in docs/STAGE_8_HANDOVER.md)
+
+- **Market Regime / Cash Shift Rule** — Weinstein-on-index (Nifty 50 and/or Nifty 500) overlay; proportional deployment (available pool / 25 of capital) when index regime is bearish, rather than a binary cash switch. Originally Stage 8 backlog item 12 — promoted to active Stage 8 scope per user decision.
+- **VIX / Drawdown Trigger** — a pre-committed rule where a VIX level or live portfolio drawdown crossing a threshold triggers a defensive posture automatically. Whether this is the same mechanism as the Market Regime rule above, or an independent additional trigger, is **unresolved** — first task of Stage 8.
+- **Remaining original backlog:** batch fetch migration (`run_pipeline.py` Stage 1), `deflated_sharpe` column rename to `deflated_sharpe_margin`, `_deflated_sharpe()` docstring fix (1.77 → 1.2686), full Harvey & Liu (2015) deflated Sharpe with inter-strategy correlation adjustment, standalone RS gate test (`rs_excess_ret_mkt > 0` independent of Weinstein).

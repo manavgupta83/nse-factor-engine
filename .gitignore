@@ -19,3 +19,6 @@ backtest/results/
 backtest/signals/
 backtest/*.log
 backtest/simulation/*.log
+portfolio/*.parquet
+portfolio/portfolio_history/*.parquet
+signals/stage6/*.parquet

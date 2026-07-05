@@ -91,6 +91,7 @@ rs_df     = compute_relative_strength(window, meta)
 
 # ── Assemble ─────────────────────────────────────────────────────────────────
 result = signals[['symbol']].copy()
+result = result.merge(meta[['symbol', 'industry']], on='symbol', how='left')
 result = result.merge(fip_df,    on='symbol', how='left')
 result = result.merge(smooth_df, on='symbol', how='left')
 result = result.merge(prox_df,   on='symbol', how='left')

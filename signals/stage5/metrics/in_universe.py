@@ -28,7 +28,7 @@ def compute(signals: pd.DataFrame, run_date_str: str, base_path: str) -> pd.Data
                    momentum_signals_final_30062026.parquet) -- NOT T.
     base_path    : repo root, e.g. "/home/ec2-user/nse-factor-engine/"
 
-    Returns DataFrame: symbol, in_universe, passes_mktcap, passes_adtv
+    Returns DataFrame: symbol, in_universe, passes_mktcap, passes_adtv, market_cap_cr, adtv_63_cr
     Caller (assembler) merges this onto signals and filters in_universe == True.
     """
     expected_path = base_path.rstrip("/") + f"/universe/universe_{run_date_str}.parquet"
@@ -45,11 +45,11 @@ def compute(signals: pd.DataFrame, run_date_str: str, base_path: str) -> pd.Data
 
     universe = pd.read_parquet(chosen_path)
 
-    required_cols = {"symbol", "in_universe", "passes_mktcap", "passes_adtv"}
+    required_cols = {"symbol", "in_universe", "passes_mktcap", "passes_adtv", "market_cap_cr", "adtv_63_cr"}
     missing = required_cols - set(universe.columns)
     assert not missing, f"universe file {chosen_path} missing columns: {missing}"
 
-    out = universe[["symbol", "in_universe", "passes_mktcap", "passes_adtv"]].copy()
+    out = universe[["symbol", "in_universe", "passes_mktcap", "passes_adtv", "market_cap_cr", "adtv_63_cr"]].copy()
 
     n_signals = len(signals)
     n_universe = len(out)

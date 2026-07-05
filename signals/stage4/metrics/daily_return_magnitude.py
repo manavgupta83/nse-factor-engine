@@ -15,14 +15,14 @@ Buckets (count of days where |daily return| falls in range):
   days_bw_2_5perc   : 0.02 <= |ret| < 0.05
 
 Classification cascade (first match wins, top to bottom):
-  days_bw_15_20perc > 2  -> EXTREME LOTTERY
+  days_bw_15_20perc > 2  -> EXTREME_LOTTERY
   days_bw_15_20perc > 0  -> LOTTERY
   days_bw_10_15perc > 0  -> BORDER_LOTTERY
   days_bw_5_10perc  > 0  -> CAUTIOUS
   days_bw_2_5perc   > 0  -> ALRIGHT
   else                   -> BORING
 
-NOTE the asymmetric threshold: only EXTREME LOTTERY requires >2 occurrences;
+NOTE the asymmetric threshold: only EXTREME_LOTTERY requires >2 occurrences;
 every other tier triggers on a single qualifying day. This is intentional —
 confirmed explicitly, not a bug.
 """
@@ -68,7 +68,7 @@ def compute(prices: pd.DataFrame, T, all_dates) -> pd.DataFrame:
         out['days_bw_5_10perc'] > 0,
         out['days_bw_2_5perc'] > 0,
     ]
-    choices = ['EXTREME LOTTERY', 'LOTTERY', 'BORDER_LOTTERY', 'CAUTIOUS', 'ALRIGHT']
+    choices = ['EXTREME_LOTTERY', 'LOTTERY', 'BORDER_LOTTERY', 'CAUTIOUS', 'ALRIGHT']
     out['lottery_class'] = np.select(conditions, choices, default='BORING')
 
     return out[[

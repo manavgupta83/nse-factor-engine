@@ -175,6 +175,11 @@ def main():
         BASE / "signals" / "stage5" / "stage5_assemble.py",
     )
 
+    run_stage(
+        "STAGE 6 — Portfolio Selection (G6_C6)",
+        BASE / "signals" / "stage6" / "stage6_assemble.py",
+    )
+
     final_files = sorted(
         glob.glob(str(BASE / "signals" / "final" / "momentum_signals_final_*.parquet"))
     )
