@@ -72,7 +72,7 @@ def _deflated_sharpe(sharpe: float, n_strategies: int, n_obs: int) -> tuple:
     Annualised Sharpe must exceed this threshold to be flagged significant.
 
     This is a conservative multiple-testing adjustment:
-    - 25 strategies → threshold ≈ 1.77
+    - 25 strategies → threshold ≈ 1.2686
     - Sharpe must be materially positive to pass
     """
     if pd.isna(sharpe) or n_obs < 2:
@@ -157,7 +157,7 @@ def compute_cell_metrics(
         'sortino'            : round(sortino, 4),
         'max_dd'             : round(max_dd, 4),
         'dd_recovery_weeks'  : int(dd_rec),
-        'deflated_sharpe'    : defl,
+        'deflated_sharpe_margin'    : defl,
         'sharpe_significant' : sig,
         'alpha'              : round(cagr - bench_cagr, 4),
         'benchmark_cagr'     : round(bench_cagr, 4),

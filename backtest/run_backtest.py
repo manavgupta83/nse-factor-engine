@@ -152,7 +152,7 @@ bench_row = {
     'sortino'            : bench_metrics['sortino'],
     'max_dd'             : bench_metrics['max_dd'],
     'dd_recovery_weeks'  : bench_metrics['dd_recovery_weeks'],
-    'deflated_sharpe'    : np.nan,
+    'deflated_sharpe_margin'    : np.nan,
     'sharpe_significant' : False,
     'alpha'              : 0.0,
     'benchmark_cagr'     : bench_metrics['cagr'],
