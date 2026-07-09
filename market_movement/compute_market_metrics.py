@@ -53,6 +53,7 @@ DATA_DIR    = Path("market_movement/data")
 INPUT_PATH  = DATA_DIR / "index_prices.parquet"
 ROLLING_OUT = DATA_DIR / "market_movement_metrics.parquet"
 DATED_OUT   = DATA_DIR / "market_movement_metrics_{}.parquet".format(RUN_DATE)
+LAST_RUN_PATH = DATA_DIR / "last_run_date_metrics.txt"
 
 RET_WINDOW_DAYS  = 21     # trading days, ~1 month -- primary window, locked with user
 WEEK_MA_WINDOW   = 30     # weeks, per weinstein.py structure
@@ -238,6 +239,17 @@ print("Market Movement -- Metrics Computation")
 print("Run Date : {}".format(END_DATE))
 print("=" * 60)
 
+# ── Idempotency guard ──────────────────────────────
+if LAST_RUN_PATH.exists():
+    last_run = LAST_RUN_PATH.read_text().strip()
+    if last_run == END_DATE.strftime("%Y-%m-%d"):
+        print("\n      Run already completed today (last_run_date = {}). Nothing to do. Exiting.".format(last_run))
+        sys.exit(0)
+    else:
+        print("      Last run date : {} -- proceeding".format(last_run))
+else:
+    print("      No last run date found -- first run")
+
 if not INPUT_PATH.exists():
     sys.exit("ERROR: {} not found. Run fetch_index_data.py first.".format(INPUT_PATH))
 
@@ -299,6 +311,9 @@ metrics_df["run_date"]          = END_DATE
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 metrics_df.to_parquet(ROLLING_OUT, index=False)
 metrics_df.to_parquet(DATED_OUT, index=False)
+
+# Update last run date -- only after successful save
+LAST_RUN_PATH.write_text(END_DATE.strftime("%Y-%m-%d"))
 
 print("\n" + "=" * 60)
 print("SUMMARY")

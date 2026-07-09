@@ -22,3 +22,9 @@ backtest/simulation/*.log
 portfolio/*.parquet
 portfolio/portfolio_history/*.parquet
 signals/stage6/*.parquet
+
+# market_movement data files -- not tracked, generated on each run
+market_movement/data/*.parquet
+market_movement/data/*.pdf
+market_movement/data/last_run_date.txt
+market_movement/data/last_run_date_metrics.txt

@@ -12,6 +12,10 @@ the existing, already-verified entry-point scripts:
     signals/stage3/stage3_assemble.py
     signals/stage4/stage4_assemble.py
     signals/stage5/stage5_assemble.py
+    signals/stage6/stage6_assemble.py
+    market_movement/fetch_index_data.py
+    market_movement/compute_market_metrics.py
+    market_movement/generate_market_report.py  (optional — warning only on failure)
 
 DESIGN DECISIONS (confirmed explicitly before writing this script):
   - Stage 1 runs under TZ=Asia/Kolkata so date.today() inside
@@ -39,6 +43,11 @@ DESIGN DECISIONS (confirmed explicitly before writing this script):
     match is automatic when run via run_pipeline.py. (Running Stage 5
     standalone on a day Stage 1 was skipped is the one case where this
     could mismatch — Stage 5 will assert and stop rather than guess.)
+  - Market movement stages (fetch, metrics, report) run after Stage 6.
+    fetch_index_data.py runs under TZ=Asia/Kolkata (same as Stage 1).
+    generate_market_report.py is non-halting — a PDF generation failure
+    raises a WARNING and logs the manual run command, but does not stop
+    the pipeline. Portfolio recommendations are unaffected.
 
 RESOLVED (previously flagged as a known gap, closed in Stage 5):
   in_universe (computed in Stage 1, universe/universe_{DDMMYYYY}.parquet)
@@ -105,6 +114,49 @@ def run_stage(label, script_path, extra_env=None):
         sys.exit(1)
 
     log(f"\n{label} completed successfully (exit code 0).")
+    return returncode
+
+
+def run_stage_optional(label, script_path, extra_env=None):
+    """
+    Non-halting variant — logs WARNING on failure but pipeline continues.
+    Used for reporting steps that should not block portfolio recommendations.
+    """
+    log("\n" + "=" * 70)
+    log(f"STARTING {label}  [OPTIONAL — will not halt pipeline on failure]")
+    log(f"Script: {script_path}")
+    log(f"Time  : {datetime.now().isoformat()}")
+    log("=" * 70)
+
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
+
+    process = subprocess.Popen(
+        [sys.executable, "-u", str(script_path)],
+        cwd=str(BASE),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    for line in process.stdout:
+        log(line.rstrip("\n"))
+
+    process.wait()
+    returncode = process.returncode
+
+    if returncode != 0:
+        log(f"\n!!! WARNING: {label} FAILED with exit code {returncode} !!!")
+        log(f"!!! Pipeline continues — portfolio recommendations are unaffected.")
+        log(f"!!! To generate the PDF manually:")
+        log(f"!!!   cd {BASE} && python3 {script_path}")
+        log(f"!!! Full output above. See {RUN_LOG_PATH} for details.")
+    else:
+        log(f"\n{label} completed successfully (exit code 0).")
+
     return returncode
 
 
@@ -178,6 +230,22 @@ def main():
     run_stage(
         "STAGE 6 — Portfolio Selection (G6_C6)",
         BASE / "signals" / "stage6" / "stage6_assemble.py",
+    )
+
+    run_stage(
+        "MARKET MOVEMENT — Fetch Index Prices",
+        BASE / "market_movement" / "fetch_index_data.py",
+        extra_env={"TZ": "Asia/Kolkata"},
+    )
+
+    run_stage(
+        "MARKET MOVEMENT — Compute Metrics",
+        BASE / "market_movement" / "compute_market_metrics.py",
+    )
+
+    run_stage_optional(
+        "MARKET MOVEMENT — Generate PDF Report",
+        BASE / "market_movement" / "generate_market_report.py",
     )
 
     final_files = sorted(
