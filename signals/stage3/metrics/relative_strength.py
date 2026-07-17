@@ -5,12 +5,12 @@ Measures each stock's cumulative log return over T-252 → T-21 relative to
 (a) the equal-weighted market return and (b) its own industry's return,
 over the same window.
 
-rs_excess_ret_mkt      : stock_cum_ret - market_cum_ret (equal-weighted all 500)
-rs_excess_ret_industry : stock_cum_ret - industry_cum_ret (equal-weighted, same industry, self included)
-rs_rank_500             : percentile rank of stock_cum_ret vs all 500 symbols (1.0 = top)
+alpha_12m1m_ew       : stock_cum_ret - market_cum_ret (equal-weighted all 500)
+alpha_12m1m_industry : stock_cum_ret - industry_cum_ret (equal-weighted, same industry, self included)
+momentum_rank_12m1m  : percentile rank of stock_cum_ret vs all 500 symbols (1.0 = top)
 
 Inputs : window (prices T-252 → T-21 with log_ret computed), meta (universe_metadata)
-Returns: dataframe with columns [symbol, rs_excess_ret_mkt, rs_excess_ret_industry, rs_rank_500]
+Returns: dataframe with columns [symbol, alpha_12m1m_ew, alpha_12m1m_industry, momentum_rank_12m1m]
 """
 
 import pandas as pd
@@ -47,11 +47,11 @@ def compute(window: pd.DataFrame, meta: pd.DataFrame) -> pd.DataFrame:
     sym_industry = meta.set_index('symbol')['industry']
 
     result = sym_cum_ret.reset_index()
-    result['industry']       = result['symbol'].map(sym_industry)
+    result['industry']         = result['symbol'].map(sym_industry)
     result['industry_cum_ret'] = result['industry'].map(industry_cum_ret)
 
-    result['rs_excess_ret_mkt']      = result['stock_cum_ret'] - market_cum_ret
-    result['rs_excess_ret_industry'] = result['stock_cum_ret'] - result['industry_cum_ret']
-    result['rs_rank_500']            = result['stock_cum_ret'].rank(pct=True)
+    result['alpha_12m1m_ew']       = result['stock_cum_ret'] - market_cum_ret
+    result['alpha_12m1m_industry'] = result['stock_cum_ret'] - result['industry_cum_ret']
+    result['momentum_rank_12m1m']  = result['stock_cum_ret'].rank(pct=True)
 
-    return result[['symbol', 'rs_excess_ret_mkt', 'rs_excess_ret_industry', 'rs_rank_500']]
+    return result[['symbol', 'alpha_12m1m_ew', 'alpha_12m1m_industry', 'momentum_rank_12m1m']]
