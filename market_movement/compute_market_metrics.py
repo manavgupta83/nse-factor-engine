@@ -19,6 +19,7 @@ as_of_date = T, latest trading day reflected in the data -> column, computed fro
    - trailing 21D % return
    - 52-week high proximity
    - drawdown from rolling peak
+   - Wilder RSI-14 (computed for all tickers including ^INDIAVIX)
 2. VIX standalone (^INDIAVIX) -- 5-tier, 21D % change
 3. 2x2 combo grid -- VIX (collapsed 3-tier) x Market Direction (Nifty 50 only, 3-tier)
    - Market direction threshold: +/-1 sigma on Nifty 50 21D returns = +/-3.58%
@@ -36,7 +37,7 @@ import pandas as pd
 from datetime import date
 from pathlib import Path
 
-# ── Repo-root guard ────────────────────────────────
+# ── Repo-root guard ──────────────────
 if not Path("signals").is_dir():
     sys.exit(
         "ERROR: 'signals/' not found in current directory.\n"
@@ -45,7 +46,7 @@ if not Path("signals").is_dir():
         "    python market_movement/compute_market_metrics.py"
     )
 
-# ── Config ──────────────────────────────────────────
+# ── Config ───────────────────────────
 END_DATE = date.today()
 RUN_DATE = END_DATE.strftime("%d%m%Y")
 
@@ -60,6 +61,7 @@ WEEK_MA_WINDOW   = 30     # weeks, per weinstein.py structure
 SMA_SHORT        = 150    # calendar days
 SMA_LONG         = 200    # calendar days
 LOOKBACK_52W_DAYS = 252   # ~52 weeks of trading days
+RSI_PERIOD       = 14     # Wilder standard
 
 VIX_SYMBOL     = "^INDIAVIX"
 PRIMARY_MARKET = "^NSEI"   # Nifty 50 -- sole driver of combo's market-direction axis (locked with user)
@@ -72,12 +74,41 @@ VIX_CONFIRMED_BAND   = 15.0   # beyond +/-15% = confirmed
 MARKET_DIRECTION_THRESHOLD_PCT = 3.58   # locked with user (see chat derivation)
 
 
-# ── Helpers ─────────────────────────────────────────
+# ── Helpers ───────────────────────────
 
 def _weekly_close(df_sym: pd.DataFrame) -> pd.Series:
     """Resample daily close to weekly (Friday), for weekly MA logic."""
     s = df_sym.set_index("date")["close"]
     return s.resample("W-FRI").last().dropna()
+
+
+def _wilder_rsi(close: pd.Series, n: int = RSI_PERIOD) -> float:
+    """
+    Wilder RSI for a single price series. Returns latest RSI value or NaN.
+    Uses Wilder smoothing (alpha = 1/N), matching TA-Lib / TradingView.
+    """
+    close = close.dropna().reset_index(drop=True)
+    if len(close) < n + 1:
+        return np.nan
+
+    delta = close.diff().dropna()
+    gain  = delta.clip(lower=0)
+    loss  = (-delta).clip(lower=0)
+
+    # Seed: simple mean of first N periods
+    avg_gain = gain.iloc[:n].mean()
+    avg_loss = loss.iloc[:n].mean()
+
+    # Wilder smoothing
+    for i in range(n, len(gain)):
+        avg_gain = (avg_gain * (n - 1) + gain.iloc[i]) / n
+        avg_loss = (avg_loss * (n - 1) + loss.iloc[i]) / n
+
+    if avg_loss == 0:
+        return 100.0
+
+    rs  = avg_gain / avg_loss
+    return round(100 - (100 / (1 + rs)), 4)
 
 
 def compute_index_metrics(df_sym: pd.DataFrame) -> dict:
@@ -139,7 +170,7 @@ def compute_index_metrics(df_sym: pd.DataFrame) -> dict:
         close_above_30w_ma    = bool(v["close"] > v["sma_30w"]) if pd.notna(v["sma_30w"]) else np.nan
         ma_30w_slope_positive = bool(v["slope_30w"] > 0) if pd.notna(v["slope_30w"]) else np.nan
 
-    # -- 150D SMA vs 200D SMA -- kept as a separate descriptive column, no longer feeds weinstein_state
+    # -- 150D SMA vs 200D SMA -- kept as a separate descriptive column
     sma_150 = close.rolling(SMA_SHORT, min_periods=SMA_SHORT).mean()
     sma_200 = close.rolling(SMA_LONG,  min_periods=SMA_LONG).mean()
     sma_150_above_200 = np.nan
@@ -163,6 +194,9 @@ def compute_index_metrics(df_sym: pd.DataFrame) -> dict:
     drawdown_series = (close - cummax) / cummax
     current_drawdown = round(drawdown_series.iloc[-1] * 100, 4)   # negative or 0, in %
 
+    # -- Wilder RSI-14 (all tickers including VIX) --
+    rsi_14 = _wilder_rsi(close, RSI_PERIOD)
+
     return {
         "symbol": df_sym["symbol"].iloc[0],
         "as_of_date": latest_date,
@@ -174,6 +208,7 @@ def compute_index_metrics(df_sym: pd.DataFrame) -> dict:
         "ret_21d_pct": ret_21d,
         "proximity_52w_high": proximity_52w_high,
         "current_drawdown_pct": current_drawdown,
+        "rsi_14": rsi_14,
     }
 
 
@@ -233,13 +268,13 @@ def classify_combo(vix_3tier: str, market_3tier: str) -> str:
     return "{}_{}".format(vix_3tier, market_3tier)
 
 
-# ── Main ────────────────────────────────────────────
+# ── Main ───────────────────────────
 print("=" * 60)
 print("Market Movement -- Metrics Computation")
 print("Run Date : {}".format(END_DATE))
 print("=" * 60)
 
-# ── Idempotency guard ──────────────────────────────
+# ── Idempotency guard ──────────────────
 if LAST_RUN_PATH.exists():
     last_run = LAST_RUN_PATH.read_text().strip()
     if last_run == END_DATE.strftime("%Y-%m-%d"):
@@ -264,10 +299,11 @@ rows = []
 for symbol, grp in prices.groupby("symbol"):
     m = compute_index_metrics(grp)
     rows.append(m)
-    print("  {:22s} state={:9s} ret_21d={:+7.2f}%  drawdown={:+7.2f}%".format(
+    print("  {:22s} state={:9s} ret_21d={:+7.2f}%  drawdown={:+7.2f}%  rsi_14={:.1f}".format(
         symbol, m["weinstein_state"],
         m["ret_21d_pct"] if pd.notna(m["ret_21d_pct"]) else float("nan"),
         m["current_drawdown_pct"] if pd.notna(m["current_drawdown_pct"]) else float("nan"),
+        m["rsi_14"] if pd.notna(m["rsi_14"]) else float("nan"),
     ))
 
 metrics_df = pd.DataFrame(rows)
@@ -299,14 +335,14 @@ print("  Combo state      : {}".format(combo_state))
 
 # Stamp combo/VIX classification onto every row (applies to all 9 tickers, same value repeated)
 as_of_date = metrics_df["as_of_date"].max()
-metrics_df["vix_ret_21d_pct"]   = vix_ret_21d
-metrics_df["vix_5tier"]         = vix_5tier
-metrics_df["vix_3tier"]         = vix_3tier
+metrics_df["vix_ret_21d_pct"]    = vix_ret_21d
+metrics_df["vix_5tier"]          = vix_5tier
+metrics_df["vix_3tier"]          = vix_3tier
 metrics_df["market_ret_21d_pct"] = market_ret_21d
-metrics_df["market_3tier"]      = market_3tier
-metrics_df["combo_state"]       = combo_state
-metrics_df["as_of_date"]        = as_of_date
-metrics_df["run_date"]          = END_DATE
+metrics_df["market_3tier"]       = market_3tier
+metrics_df["combo_state"]        = combo_state
+metrics_df["as_of_date"]         = as_of_date
+metrics_df["run_date"]           = END_DATE
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 metrics_df.to_parquet(ROLLING_OUT, index=False)

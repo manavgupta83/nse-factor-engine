@@ -65,7 +65,7 @@ as_of_date = pd.Timestamp(signals['as_of_date'].iloc[0])
 print(f"Input signals shape: {signals.shape}")
 print(f"as_of_date (T) inside file: {as_of_date}")
 
-# ── Step 2: Read current portfolio state (symbol membership only) ─────────
+# ── Step 2: Read current portfolio state (symbol membership only) ─────────────────
 PORTFOLIO_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 
 if PORTFOLIO_STATE_PATH.exists():
@@ -74,7 +74,7 @@ if PORTFOLIO_STATE_PATH.exists():
     stored_last_rebalance_date = pd.Timestamp(portfolio_state['last_rebalance_date'].iloc[0]) if len(portfolio_state) > 0 else None
     print(f"Existing portfolio state: {len(current_holdings)} holdings, last_rebalance_date={stored_last_rebalance_date}")
 
-    # ── Same-cycle rerun guard ──────────────────────────────────────────────
+    # ── Same-cycle rerun guard ────────────────────────────────────────────────────────
     if stored_last_rebalance_date is not None and as_of_date == stored_last_rebalance_date:
         print(f"\nSame-cycle rerun detected: as_of_date ({as_of_date}) == last_rebalance_date "
               f"({stored_last_rebalance_date}) already in portfolio_state.parquet.")
@@ -84,29 +84,29 @@ else:
     current_holdings = set()
     print("No existing portfolio state -- first run, empty holdings")
 
-# ── Step 3: Apply G6 gate ─────────────────────────────────────────────────
+# ── Step 3: Apply G6 gate ─────────────────────────────────────────────────────────────────────────
 gated = apply_g6_gate(signals)
 pool_size = len(gated)
 print(f"G6 gate pool size: {pool_size}")
 if pool_size < PORTFOLIO_N:
     print(f"OBSERVATION: pool size {pool_size} < N={PORTFOLIO_N}. Deploying all available (Stage 8 backlog covers proportional sizing).")
 
-# ── Step 4: Apply C6 score (top 50: TOP_25 + REST) ────────────────────────
+# ── Step 4: Apply C6 score (top 50: TOP_25 + REST) ─────────────────────────────────────────
 ranked = apply_c6_score(gated, current_holdings=current_holdings, N=PORTFOLIO_N, pool_size=pool_size)
 print(f"C6 scored/ranked rows: {len(ranked)}")
 
 top25_symbols = set(ranked[ranked['tier'] == 'TOP_25']['symbol'])
 
-# ── Step 5: Merge back other Stage 5 metrics ──────────────────────────────
+# ── Step 5: Merge back other Stage 5 metrics ──────────────────────────────────────────────────
 merge_cols = [
-    'symbol', 'ret_12m1m', 'rs_excess_ret_mkt', 'weinstein_stage2',
+    'symbol', 'ret_12m1m', 'alpha_12m1m_ew', 'weinstein_stage2',
     'lottery_class', 'proximity_52w_high', 'as_of_date',
-    'market_cap_cr', 'adtv_63_cr'
+    'market_cap_cr', 'adtv_63_cr', 'rsi_14'
 ]
 ranked = ranked.merge(signals[merge_cols], on='symbol', how='left', suffixes=('', '_dup'))
 ranked = ranked[[c for c in ranked.columns if not c.endswith('_dup')]]
 
-# ── Step 6: Assign action ─────────────────────────────────────────────────
+# ── Step 6: Assign action ─────────────────────────────────────────────────────────────────────────────
 def assign_action(row):
     if row['tier'] == 'REST':
         return 'WATCHLIST'
@@ -122,19 +122,19 @@ if len(sell_symbols) > 0:
 else:
     print("SELL list: empty")
 
-# ── Step 7: Run date (IST) — used for output FILENAMES only ────────────────
+# ── Step 7: Run date (IST) — used for output FILENAMES only ───────────────────────────────────
 run_date = pd.Timestamp.now(tz='Asia/Kolkata').normalize().tz_localize(None)
 run_date_ddmmyyyy = run_date.strftime('%d%m%Y')
 
 ranked['run_date'] = run_date
 
-# ── Step 8: Write recommendations output (50 rows: TOP_25 + REST) ─────────
+# ── Step 8: Write recommendations output (50 rows: TOP_25 + REST) ─────────────────────────
 output_path = STAGE6_OUTPUT_DIR / f"portfolio_recommendations_{run_date_ddmmyyyy}.parquet"
 ranked.to_parquet(output_path, index=False)
 print(f"\nRecommendations written to: {output_path}")
 print(f"Shape: {ranked.shape}")
 
-# ── Step 9: Update portfolio_state.parquet (TOP_25 symbols only) ──────────
+# ── Step 9: Update portfolio_state.parquet (TOP_25 symbols only) ──────────────────────────
 # last_rebalance_date = as_of_date (Stage 5 T), NOT run_date -- enables same-cycle detection
 new_portfolio_state = pd.DataFrame({
     'symbol': sorted(top25_symbols),
@@ -143,7 +143,7 @@ new_portfolio_state = pd.DataFrame({
 new_portfolio_state.to_parquet(PORTFOLIO_STATE_PATH, index=False)
 print(f"Portfolio state updated: {len(new_portfolio_state)} holdings, last_rebalance_date={as_of_date}")
 
-# ── Step 10: Write history snapshot ────────────────────────────────────────
+# ── Step 10: Write history snapshot ────────────────────────────────────────────────────────────────────
 history_path = PORTFOLIO_HISTORY_DIR / f"portfolio_{run_date_ddmmyyyy}.parquet"
 new_portfolio_state.to_parquet(history_path, index=False)
 print(f"History snapshot written to: {history_path}")
