@@ -1,9 +1,9 @@
 """
 Stage 6 (production) — Score: C6
 
-c6_raw = rank_ret_12m1m + rank_rs_excess_ret_mkt
+c6_raw = rank_ret_12m1m + rank_alpha_12m1m_ew
 Incumbent boost: c6_score = c6_raw / 1.2 (lower = better, harder to displace)
-NaN in rank_ret_12m1m or rank_rs_excess_ret_mkt -> row dropped before scoring
+NaN in rank_ret_12m1m or rank_alpha_12m1m_ew -> row dropped before scoring
 
 Output: top min(50, pool_size) rows by c6_score ascending, tiebreak proximity_52w_high desc
 tier column: 'TOP_25' for rank <=25, 'REST' for rank 26-50
@@ -32,9 +32,9 @@ def apply_c6_score(filtered_df: pd.DataFrame, current_holdings=None, N=PORTFOLIO
 
     df = filtered_df.copy()
 
-    df = df.dropna(subset=['rank_ret_12m1m', 'rank_rs_excess_ret_mkt']).copy()
+    df = df.dropna(subset=['rank_ret_12m1m', 'rank_alpha_12m1m_ew']).copy()
 
-    df['c6_raw'] = df['rank_ret_12m1m'] + df['rank_rs_excess_ret_mkt']
+    df['c6_raw'] = df['rank_ret_12m1m'] + df['rank_alpha_12m1m_ew']
 
     df['incumbent_boost_applied'] = df['symbol'].isin(current_holdings)
     df['c6_score'] = df.apply(
