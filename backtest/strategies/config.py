@@ -68,6 +68,16 @@ SCORE_DEFINITIONS = {
         'incumbent_multiplier': 1.2,   # applied to composite score of held stocks
     },
 
+    'C6RSI': {
+        # C6 + RSI as third scoring component
+        # rank_rsi_14: ranked ascending=False within in_universe==True (higher RSI = rank 1)
+        # Same 1.2x incumbent boost as C6
+        'type'     : 'average_ranks',
+        'columns'  : ['rank_ret_12m1m', 'rank_rs_excess_ret_mkt', 'rank_rsi_14'],
+        'ascending': True,
+        'incumbent_multiplier': 1.2,
+    },
+
     'C7': {
         # 0.5 x rank_ret_12m1m + 0.5 x rank_rs_excess_ret_mkt — no hysteresis
         'type'     : 'average_ranks',
@@ -85,5 +95,5 @@ MOMENTUM_RANK_COLS = [
 
 # ── Full grid ─────────────────────────────────────────────────────────────────
 GATE_IDS  = ['G2', 'G3', 'G4', 'G5', 'G6']
-SCORE_IDS = ['C1', 'C3', 'C6', 'C7']
-CELLS     = [('G2', 'C3'), ('G2', 'C6'), ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7'), ('G5', 'C1'), ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C7')] 
+SCORE_IDS = ['C1', 'C3', 'C6', 'C6RSI', 'C7']
+CELLS     = [('G2', 'C3'), ('G2', 'C6'), ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7'), ('G5', 'C1'), ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C6RSI'), ('G6', 'C7')]
