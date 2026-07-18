@@ -4,10 +4,13 @@ Backtest Strategy Engine — Score Variants
 apply_score(score_id, survivors_df, n, tiebreaker, tiebreaker_ascending, incumbent_symbols)
     → top-N DataFrame
 
-C6: average of (rank_ret_12m1m, rank_rs_excess_ret_mkt) with 1.2x multiplier on incumbents.
-    Multiplier applied to composite score before ranking — incumbents get score boosted,
-    lowering their effective rank number, making them harder to displace.
-    Week 1: no incumbents → no multiplier.
+C6:    average of (rank_ret_12m1m, rank_rs_excess_ret_mkt) with 1.2x multiplier on incumbents.
+C6RSI: average of (rank_ret_12m1m, rank_rs_excess_ret_mkt, rank_rsi_14) with 1.2x multiplier.
+       rank_rsi_14 ranked ascending=False (higher RSI = rank 1) within in_universe==True.
+
+Multiplier applied to composite score before ranking — incumbents get score boosted,
+lowering their effective rank number, making them harder to displace.
+Week 1: no incumbents → no multiplier.
 """
 
 import pandas as pd
@@ -31,9 +34,9 @@ def apply_score(
     incumbent_symbols: set = None,
 ) -> pd.DataFrame:
     """
-    score_id          : 'C1', 'C3', 'C6', 'C7'
+    score_id          : 'C1', 'C3', 'C6', 'C6RSI', 'C7'
     survivors         : gate-filtered DataFrame
-    incumbent_symbols : set of symbols held from prior week (C6 only)
+    incumbent_symbols : set of symbols held from prior week (C6/C6RSI only)
     """
     assert score_id in SCORE_DEFINITIONS, f"Unknown score_id: {score_id}"
 
@@ -54,7 +57,7 @@ def apply_score(
         df['composite_score'] = df[col]
         df = df[df['composite_score'].notna()]
 
-    # ── C3, C6, C7: average of ranks ─────────────────────────────────────────
+    # ── C3, C6, C6RSI, C7: average of ranks ──────────────────────────────────
     elif defn['type'] == 'average_ranks':
         cols = defn['columns']
         for c in cols:
@@ -62,7 +65,7 @@ def apply_score(
         df['composite_score'] = df[cols].mean(axis=1, skipna=False)
         df = df[df['composite_score'].notna()]
 
-        # C6 incumbent multiplier — divide composite score (lower = better rank)
+        # incumbent multiplier — divide composite score (lower = better rank)
         # dividing by 1.2 makes incumbents appear to have better (lower) score
         if defn.get('incumbent_multiplier') and len(incumbent_symbols) > 0:
             multiplier = defn['incumbent_multiplier']
