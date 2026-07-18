@@ -174,4 +174,4 @@ class PortfolioState:
             row['portfolio_value'] = portfolio_value_post
             row['cash_pool']       = cash_pool_after
 
-        return portfolio_value_post, activity
+        return portfolio_value_post, portfolio_value_pre, activity

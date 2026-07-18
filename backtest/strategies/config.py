@@ -41,6 +41,13 @@ GATE_DEFINITIONS = {
         ('lottery_class',      'not_in', {'LOTTERY', 'BORDER_LOTTERY', 'EXTREME LOTTERY'}),
         ('rs_excess_ret_mkt',  'gt',     0),
     ],
+
+    'G7': [
+        ('weinstein_stage2',        'eq',     True),
+        ('lottery_class',           'not_in', {'LOTTERY', 'BORDER_LOTTERY', 'EXTREME LOTTERY'}),
+        ('rs_excess_ret_mkt',       'gt',     0),
+        ('vol_weinstein_asymmetry', 'eq',     True),
+    ],
 }
 
 # ── Score Variants ────────────────────────────────────────────────────────────
@@ -94,6 +101,6 @@ MOMENTUM_RANK_COLS = [
 ]
 
 # ── Full grid ─────────────────────────────────────────────────────────────────
-GATE_IDS  = ['G2', 'G3', 'G4', 'G5', 'G6']
+GATE_IDS  = ['G2', 'G3', 'G4', 'G5', 'G6', 'G7']
 SCORE_IDS = ['C1', 'C3', 'C6', 'C6RSI', 'C7']
-CELLS     = [('G2', 'C3'), ('G2', 'C6'), ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7'), ('G5', 'C1'), ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C6RSI'), ('G6', 'C7')]
+CELLS     = [('G2', 'C3'), ('G2', 'C6'), ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7'), ('G5', 'C1'), ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C6RSI'), ('G6', 'C7'), ('G7', 'C6')]
