@@ -18,6 +18,7 @@ AUDIT_COLS = [
     'rank_rs_excess_ret_mkt', 'rs_excess_ret_mkt',
     'industry_rank', 'rs_rank_500',
     'adtv_63_cr',
+    'rsi_14', 'rank_rsi_14',
 ]
 
 
@@ -31,9 +32,9 @@ def get_portfolio(
 ) -> pd.DataFrame:
     """
     gate_id           : 'G2'–'G6'
-    score_id          : 'C1', 'C3', 'C6', 'C7'
+    score_id          : 'C1', 'C3', 'C6', 'C6RSI', 'C7'
     signals           : signals DataFrame for one Friday
-    incumbent_symbols : set of symbols held from prior week (used by C6 only)
+    incumbent_symbols : set of symbols held from prior week (used by C6/C6RSI only)
 
     Returns           : top-N DataFrame with cell metadata attached
     """
@@ -77,12 +78,12 @@ def run_all_cells(
     current_holdings: dict = None,   # {cell_id: set(symbols)} from prior week
 ) -> pd.DataFrame:
     """
-    Runs all 9 cells on a single Friday signals DataFrame.
+    Runs all cells on a single Friday signals DataFrame.
 
     current_holdings : dict of {cell_id: set(symbols)} held from prior week.
-                       Used by C6 incumbent multiplier. Pass {} for week 1.
+                       Used by C6/C6RSI incumbent multiplier. Pass {} for week 1.
 
-    Returns long-format DataFrame: 9 cells × up to 25 stocks
+    Returns long-format DataFrame: all cells × up to 25 stocks
     """
     if current_holdings is None:
         current_holdings = {}
