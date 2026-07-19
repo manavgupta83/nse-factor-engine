@@ -8,7 +8,6 @@ Writes: market_movement/data/market_movement_report_{RUN_DATE}.pdf
 import sys
 import pandas as pd
 import numpy as np
-from datetime import date
 from pathlib import Path
 
 try:
@@ -27,7 +26,7 @@ if not Path("signals").is_dir():
 
 DATA_DIR   = Path("market_movement/data")
 INPUT_PATH = DATA_DIR / "market_movement_metrics.parquet"
-RUN_DATE   = date.today().strftime("%d%m%Y")
+RUN_DATE   = pd.Timestamp.now(tz='Asia/Kolkata').strftime("%d%m%Y")
 OUT_PATH   = DATA_DIR / f"market_movement_report_{RUN_DATE}.pdf"
 
 if not INPUT_PATH.exists():
