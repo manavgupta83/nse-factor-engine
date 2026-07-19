@@ -21,11 +21,12 @@ glob -> exclude backups -> regex DDMMYYYY -> parse to date -> sort -> latest.
 Action logic:
   HOLD       = in TOP_25 AND in current_holdings
   BUY        = in TOP_25 AND NOT in current_holdings
-  SELL       = in current_holdings AND NOT in TOP_25
-  WATCHLIST  = in REST (rank 26-50), no action
+  SELL       = was in current_holdings AND now NOT in TOP_25
+               (covers both: slipped to REST and fully exited top 50)
+  WATCHLIST  = in REST (rank 26-50) AND was NOT in current_holdings
 
 Output:
-  signals/stage6/portfolio_recommendations_{DDMMYYYY}.parquet  (50 rows: TOP_25 + REST)
+  signals/stage6/portfolio_recommendations_{DDMMYYYY}.parquet  (50+ rows: TOP_25 + REST + SELL)
   portfolio/portfolio_state.parquet                             (TOP_25 symbols only)
   portfolio/portfolio_history/portfolio_{DDMMYYYY}.parquet      (point-in-time snapshot)
 """
@@ -107,20 +108,15 @@ ranked = ranked.merge(signals[merge_cols], on='symbol', how='left', suffixes=(''
 ranked = ranked[[c for c in ranked.columns if not c.endswith('_dup')]]
 
 # ── Step 6: Assign action ─────────────────────────────────────────────────────────────────────────────
+# SELL covers both: slipped to REST and fully exited top 50.
+# A REST stock previously in TOP_25 is a SELL, not a WATCHLIST.
 def assign_action(row):
     if row['tier'] == 'REST':
-        return 'WATCHLIST'
-    in_holdings = row['symbol'] in current_holdings
-    return 'HOLD' if in_holdings else 'BUY'
+        return 'SELL' if row['symbol'] in current_holdings else 'WATCHLIST'
+    # TOP_25
+    return 'HOLD' if row['symbol'] in current_holdings else 'BUY'
 
 ranked['action'] = ranked.apply(assign_action, axis=1)
-
-# SELL list: symbols in current_holdings NOT in new TOP_25
-sell_symbols = current_holdings - top25_symbols
-if len(sell_symbols) > 0:
-    print(f"SELL list: {len(sell_symbols)} symbols -- {sorted(sell_symbols)}")
-else:
-    print("SELL list: empty")
 
 # ── Step 7: Run date (IST) — used for output FILENAMES only ───────────────────────────────────
 run_date = pd.Timestamp.now(tz='Asia/Kolkata').normalize().tz_localize(None)
@@ -128,13 +124,35 @@ run_date_ddmmyyyy = run_date.strftime('%d%m%Y')
 
 ranked['run_date'] = run_date
 
-# ── Step 8: Write recommendations output (50 rows: TOP_25 + REST) ─────────────────────────
+# ── Step 8: Append fully-exited SELL rows (not even in top 50) ────────────────────────────────
+# These stocks were in current_holdings but didn't appear in ranked at all.
+fully_exited = current_holdings - set(ranked['symbol'])
+if fully_exited:
+    print(f"Fully exited (not in top 50): {len(fully_exited)} symbols -- {sorted(fully_exited)}")
+    sell_metrics = signals[signals['symbol'].isin(fully_exited)][merge_cols].copy()
+    sell_metrics['tier']         = 'SELL'
+    sell_metrics['action']       = 'SELL'
+    sell_metrics['g6_pool_size'] = pool_size
+    sell_metrics['run_date']     = run_date
+    for col in ranked.columns:
+        if col not in sell_metrics.columns:
+            sell_metrics[col] = pd.NA
+    sell_metrics = sell_metrics[ranked.columns]
+    ranked = pd.concat([ranked, sell_metrics], ignore_index=True)
+else:
+    print("Fully exited: none")
+
+# Summary
+sell_count = (ranked['action'] == 'SELL').sum()
+print(f"SELL total: {sell_count} symbols (REST demotions + fully exited)")
+
+# ── Step 9: Write recommendations output (50+ rows: TOP_25 + REST + SELL) ────────────────────
 output_path = STAGE6_OUTPUT_DIR / f"portfolio_recommendations_{run_date_ddmmyyyy}.parquet"
 ranked.to_parquet(output_path, index=False)
 print(f"\nRecommendations written to: {output_path}")
 print(f"Shape: {ranked.shape}")
 
-# ── Step 9: Update portfolio_state.parquet (TOP_25 symbols only) ──────────────────────────
+# ── Step 10: Update portfolio_state.parquet (TOP_25 symbols only) ─────────────────────────────
 # last_rebalance_date = as_of_date (Stage 5 T), NOT run_date -- enables same-cycle detection
 new_portfolio_state = pd.DataFrame({
     'symbol': sorted(top25_symbols),
@@ -143,7 +161,7 @@ new_portfolio_state = pd.DataFrame({
 new_portfolio_state.to_parquet(PORTFOLIO_STATE_PATH, index=False)
 print(f"Portfolio state updated: {len(new_portfolio_state)} holdings, last_rebalance_date={as_of_date}")
 
-# ── Step 10: Write history snapshot ────────────────────────────────────────────────────────────────────
+# ── Step 11: Write history snapshot ───────────────────────────────────────────────────────────
 history_path = PORTFOLIO_HISTORY_DIR / f"portfolio_{run_date_ddmmyyyy}.parquet"
 new_portfolio_state.to_parquet(history_path, index=False)
 print(f"History snapshot written to: {history_path}")
