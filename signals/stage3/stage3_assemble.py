@@ -10,7 +10,11 @@ Columns: symbol, as_of_date, fip_score, pct_pos_days, pct_neg_days,
          smoothness, proximity_52w_high, residual_momentum, rm_r2, rm_n_obs,
          industry_cum_ret, industry_rank, weinstein_stage2,
          alpha_12m1m_ew, alpha_12m1m_industry, momentum_rank_12m1m,
-         rsi_14, rsi_7
+         rsi_14, rsi_7,
+         ema_20, ema_50, dist_ema_20, dist_ema_50,
+         mfi_14,
+         stoch_rsi_k, stoch_rsi_d,
+         bb_middle, bb_upper, bb_lower, bb_pct_b, bb_bandwidth
 """
 
 import sys
@@ -29,6 +33,10 @@ from signals.stage3.metrics.leading_industry   import compute as compute_leading
 from signals.stage3.metrics.weinstein          import compute as compute_weinstein
 from signals.stage3.metrics.relative_strength  import compute as compute_relative_strength
 from signals.stage3.metrics.rsi                import compute as compute_rsi
+from signals.stage3.metrics.ema_distance       import compute as compute_ema_distance
+from signals.stage3.metrics.mfi                import compute as compute_mfi
+from signals.stage3.metrics.stoch_rsi          import compute as compute_stoch_rsi
+from signals.stage3.metrics.bollinger          import compute as compute_bollinger
 
 # ── Load ──────────────────────────────────────────────────────────────────────────────
 prices = pd.read_parquet(f"{BASE}/data/prices.parquet")
@@ -88,6 +96,18 @@ rs_df     = compute_relative_strength(window, meta)
 print("Computing RSI (N=14 and N=7)...")
 rsi_df    = compute_rsi(prices, T)
 
+print("Computing EMA distance (20 and 50)...")
+ema_df    = compute_ema_distance(prices, T)
+
+print("Computing MFI-14...")
+mfi_df    = compute_mfi(prices, T)
+
+print("Computing Stochastic RSI (%K and %D)...")
+srsi_df   = compute_stoch_rsi(prices, T)
+
+print("Computing Bollinger Bands...")
+bb_df     = compute_bollinger(prices, T)
+
 # ── Assemble ─────────────────────────────────────────────────────────────────────────────────
 result = signals[['symbol']].copy()
 result = result.merge(meta[['symbol', 'industry']], on='symbol', how='left')
@@ -99,6 +119,10 @@ result = result.merge(li_df,     on='symbol', how='left')
 result = result.merge(ws_df,     on='symbol', how='left')
 result = result.merge(rs_df,     on='symbol', how='left')
 result = result.merge(rsi_df,    on='symbol', how='left')
+result = result.merge(ema_df,    on='symbol', how='left')
+result = result.merge(mfi_df,    on='symbol', how='left')
+result = result.merge(srsi_df,   on='symbol', how='left')
+result = result.merge(bb_df,     on='symbol', how='left')
 result.insert(1, 'as_of_date', T)
 
 # ── Final checks ───────────────────────────────────────────────────────────────────────────────
@@ -116,7 +140,11 @@ for col in ['fip_score', 'pct_pos_days', 'pct_neg_days', 'smoothness',
             'proximity_52w_high', 'residual_momentum',
             'industry_cum_ret', 'industry_rank',
             'alpha_12m1m_ew', 'alpha_12m1m_industry', 'momentum_rank_12m1m',
-            'rsi_14', 'rsi_7']:
+            'rsi_14', 'rsi_7',
+            'ema_20', 'ema_50', 'dist_ema_20', 'dist_ema_50',
+            'mfi_14',
+            'stoch_rsi_k', 'stoch_rsi_d',
+            'bb_pct_b', 'bb_bandwidth']:
     print(f"\n{col}:")
     print(result[col].describe(percentiles=[.05, .25, .5, .75, .95]).to_string())
 
