@@ -101,7 +101,11 @@ top25_symbols = set(ranked[ranked['tier'] == 'TOP_25']['symbol'])
 merge_cols = [
     'symbol', 'ret_12m1m', 'alpha_12m1m_ew', 'weinstein_stage2',
     'lottery_class', 'proximity_52w_high', 'as_of_date',
-    'market_cap_cr', 'adtv_63_cr', 'rsi_14', 'rsi_7'
+    'market_cap_cr', 'adtv_63_cr', 'rsi_14', 'rsi_7',
+    'dist_ema_20', 'dist_ema_50',
+    'mfi_14',
+    'stoch_rsi_k', 'stoch_rsi_d',
+    'bb_pct_b', 'bb_bandwidth',
 ]
 ranked = ranked.merge(signals[merge_cols], on='symbol', how='left', suffixes=('', '_dup'))
 ranked = ranked[[c for c in ranked.columns if not c.endswith('_dup')]]
