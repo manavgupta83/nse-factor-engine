@@ -18,7 +18,7 @@ no calendar arithmetic.
   bb_bandwidth_prev_wk  : bandwidth as of T-5 trading days
   bb_bandwidth_prev_2wk : bandwidth as of T-10 trading days
   bb_bandwidth_prev_3wk : bandwidth as of T-15 trading days
-  bb_squeeze            : 1 if curr_wk bandwidth < all three prior weeks, else 0
+  bb_squeeze            : 'Y' if curr_wk bandwidth < all three prior weeks, else 'N'
                           (bandwidth at 4-week low = coiled spring condition)
 
 Interpretation (%B):
@@ -28,11 +28,11 @@ Interpretation (%B):
   < 0.0     : Price below lower band — oversold
 
 Bandwidth (self-normalised — compare against own history, not cross-stock):
-  bb_squeeze = 1                → bands at tightest in 4 weeks, big move imminent
+  bb_squeeze = 'Y'              → bands at tightest in 4 weeks, big move imminent
   bb_bandwidth_curr_wk rising   → volatility expanding, move underway; watch %B for direction
 
 Breakout setup (all three required):
-  1. bb_squeeze = 1 (bandwidth contracting over 4 weeks)
+  1. bb_squeeze = 'Y' (bandwidth contracting over 4 weeks)
   2. bb_pct_b crosses above 1.0 (first close outside upper band)
   3. MFI rising above 55 (volume participating)
 
@@ -110,22 +110,22 @@ def _compute_bb(close: pd.Series) -> dict:
     band_width = upper - lower
 
     if band_width == 0 or middle == 0:
-        pct_b    = np.nan
-        bw_curr  = np.nan
+        pct_b   = np.nan
+        bw_curr = np.nan
     else:
         pct_b   = round((close_t - lower) / band_width, 4)
         bw_curr = round(band_width / middle * 100, 4)
 
     # ── Prior weeks: slice close up to T-Nw and recompute bandwidth ──
     n = len(close)
-    bw_1w  = _bandwidth_as_of(close.iloc[:n - TRADING_DAYS_W])     if n > TRADING_DAYS_W     else np.nan
-    bw_2w  = _bandwidth_as_of(close.iloc[:n - 2 * TRADING_DAYS_W]) if n > 2 * TRADING_DAYS_W else np.nan
-    bw_3w  = _bandwidth_as_of(close.iloc[:n - 3 * TRADING_DAYS_W]) if n > 3 * TRADING_DAYS_W else np.nan
+    bw_1w = _bandwidth_as_of(close.iloc[:n - TRADING_DAYS_W])     if n > TRADING_DAYS_W     else np.nan
+    bw_2w = _bandwidth_as_of(close.iloc[:n - 2 * TRADING_DAYS_W]) if n > 2 * TRADING_DAYS_W else np.nan
+    bw_3w = _bandwidth_as_of(close.iloc[:n - 3 * TRADING_DAYS_W]) if n > 3 * TRADING_DAYS_W else np.nan
 
     # ── Squeeze: curr bandwidth < all three prior weeks ──
     prior = [x for x in [bw_1w, bw_2w, bw_3w] if not np.isnan(x)]
     if not np.isnan(bw_curr) and len(prior) == 3:
-        squeeze = 1 if bw_curr < min(prior) else 0
+        squeeze = 'Y' if bw_curr < min(prior) else 'N'
     else:
         squeeze = np.nan
 
