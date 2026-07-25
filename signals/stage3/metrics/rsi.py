@@ -17,17 +17,16 @@ Steps:
   4. Apply Wilder smoothing for all subsequent periods:
        avg_gain[t] = (avg_gain[t-1] * (N-1) + gain[t]) / N
        avg_loss[t] = (avg_loss[t-1] * (N-1) + loss[t]) / N
-  5. RS  = avg_gain / avg_loss  (avg_loss == 0 → RS = inf → RSI = 100)
+  5. RS  = avg_gain / avg_loss  (avg_loss == 0 -> RS = inf -> RSI = 100)
   6. RSI = 100 - (100 / (1 + RS))
 
 Inputs:
   prices : full prices.parquet dataframe (all dates up to and including T)
-  T      : as-of date (pd.Timestamp) — RSI computed using all rows ≤ T
-  n      : lookback period (default 14, Wilder standard)
+  T      : as-of date (pd.Timestamp) — RSI computed using all rows <= T
 
 Returns:
-  dataframe with columns [symbol, rsi_14]
-  Symbols with fewer than N+1 price observations return NaN.
+  dataframe with columns [symbol, rsi_14, rsi_7]
+  Symbols with fewer than N+1 price observations return NaN for that period.
 """
 
 import pandas as pd
@@ -64,37 +63,43 @@ def _wilder_rsi(close: pd.Series, n: int) -> float:
     return round(rsi, 4)
 
 
-def compute(prices: pd.DataFrame, T: pd.Timestamp, n: int = 14) -> pd.DataFrame:
+def compute(prices: pd.DataFrame, T: pd.Timestamp) -> pd.DataFrame:
     """
-    Compute Wilder RSI-N for every symbol in prices, as of T.
+    Compute Wilder RSI-14 and RSI-7 for every symbol in prices, as of T.
 
     Parameters
     ----------
     prices : DataFrame with columns [symbol, date, close, ...]
     T      : latest date to include (inclusive)
-    n      : RSI period (default 14)
 
     Returns
     -------
-    DataFrame with columns [symbol, rsi_{n}]
+    DataFrame with columns [symbol, rsi_14, rsi_7]
     """
-    col_name = f"rsi_{n}"
-
     df = prices[prices['date'] <= T][['symbol', 'date', 'close']].copy()
     df = df.sort_values(['symbol', 'date']).reset_index(drop=True)
 
-    results = (
+    rsi14 = (
         df.groupby('symbol')['close']
-        .apply(lambda s: _wilder_rsi(s, n))
+        .apply(lambda s: _wilder_rsi(s, 14))
         .reset_index()
-        .rename(columns={'close': col_name})
+        .rename(columns={'close': 'rsi_14'})
+    )
+    rsi7 = (
+        df.groupby('symbol')['close']
+        .apply(lambda s: _wilder_rsi(s, 7))
+        .reset_index()
+        .rename(columns={'close': 'rsi_7'})
     )
 
-    n_null = results[col_name].isnull().sum()
-    if n_null > 0:
-        print(f"WARNING: {n_null} symbol(s) have NaN {col_name} (insufficient price history < {n+1} rows)")
+    results = rsi14.merge(rsi7, on='symbol', how='left')
 
-    print(f"RSI-{n} computed for {len(results)} symbols. "
-          f"Range: [{results[col_name].min():.2f}, {results[col_name].max():.2f}]")
+    for col, period in [('rsi_14', 14), ('rsi_7', 7)]:
+        n_null = results[col].isnull().sum()
+        if n_null > 0:
+            print(f"WARNING: {n_null} symbol(s) have NaN {col} (< {period+1} price rows)")
 
-    return results[['symbol', col_name]]
+    print(f"RSI-14: [{results['rsi_14'].min():.2f}, {results['rsi_14'].max():.2f}]")
+    print(f"RSI-7 : [{results['rsi_7'].min():.2f}, {results['rsi_7'].max():.2f}]")
+
+    return results[['symbol', 'rsi_14', 'rsi_7']]

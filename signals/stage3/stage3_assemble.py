@@ -10,7 +10,7 @@ Columns: symbol, as_of_date, fip_score, pct_pos_days, pct_neg_days,
          smoothness, proximity_52w_high, residual_momentum, rm_r2, rm_n_obs,
          industry_cum_ret, industry_rank, weinstein_stage2,
          alpha_12m1m_ew, alpha_12m1m_industry, momentum_rank_12m1m,
-         rsi_14
+         rsi_14, rsi_7
 """
 
 import sys
@@ -42,12 +42,6 @@ T_21  = all_dates[-22]
 T_252 = all_dates[-253]
 AS_OF = T.strftime('%d%m%Y')
 
-# RUN_DATE_STR: IST calendar date this script executed -- used ONLY for
-# filenames (reading Stage 2's input, writing Stage 3's own outputs).
-# AS_OF (above, derived from T) remains the source of truth for the
-# as_of_date COLUMN and all date math (T_21, T_252) -- unchanged.
-# Confirmed 2026-06-30: filenames across stages should share run-date,
-# not T, since T can lag behind the actual run date.
 import zoneinfo
 from datetime import datetime as _dt
 RUN_DATE_STR = _dt.now(zoneinfo.ZoneInfo("Asia/Kolkata")).date().strftime('%d%m%Y')
@@ -91,8 +85,8 @@ ws_df     = compute_weinstein(prices, T)
 print("Computing relative strength (alpha/momentum)...")
 rs_df     = compute_relative_strength(window, meta)
 
-print("Computing RSI (N=14)...")
-rsi_df    = compute_rsi(prices, T, n=14)
+print("Computing RSI (N=14 and N=7)...")
+rsi_df    = compute_rsi(prices, T)
 
 # ── Assemble ─────────────────────────────────────────────────────────────────────────────────
 result = signals[['symbol']].copy()
@@ -107,7 +101,7 @@ result = result.merge(rs_df,     on='symbol', how='left')
 result = result.merge(rsi_df,    on='symbol', how='left')
 result.insert(1, 'as_of_date', T)
 
-# ── Final checks ────────────────────────────────────────────────────────────────────────────────
+# ── Final checks ───────────────────────────────────────────────────────────────────────────────
 print("\n--- Shape ---")
 print(result.shape)
 
@@ -122,7 +116,7 @@ for col in ['fip_score', 'pct_pos_days', 'pct_neg_days', 'smoothness',
             'proximity_52w_high', 'residual_momentum',
             'industry_cum_ret', 'industry_rank',
             'alpha_12m1m_ew', 'alpha_12m1m_industry', 'momentum_rank_12m1m',
-            'rsi_14']:
+            'rsi_14', 'rsi_7']:
     print(f"\n{col}:")
     print(result[col].describe(percentiles=[.05, .25, .5, .75, .95]).to_string())
 
