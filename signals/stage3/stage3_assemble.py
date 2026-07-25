@@ -14,7 +14,9 @@ Columns: symbol, as_of_date, fip_score, pct_pos_days, pct_neg_days,
          ema_20, ema_50, dist_ema_20, dist_ema_50,
          mfi_14,
          stoch_rsi_k, stoch_rsi_d,
-         bb_middle, bb_upper, bb_lower, bb_pct_b, bb_bandwidth
+         bb_middle, bb_upper, bb_lower, bb_pct_b,
+         bb_bandwidth_curr_wk, bb_bandwidth_prev_wk,
+         bb_bandwidth_prev_2wk, bb_bandwidth_prev_3wk, bb_squeeze
 """
 
 import sys
@@ -144,12 +146,17 @@ for col in ['fip_score', 'pct_pos_days', 'pct_neg_days', 'smoothness',
             'ema_20', 'ema_50', 'dist_ema_20', 'dist_ema_50',
             'mfi_14',
             'stoch_rsi_k', 'stoch_rsi_d',
-            'bb_pct_b', 'bb_bandwidth']:
+            'bb_pct_b',
+            'bb_bandwidth_curr_wk', 'bb_bandwidth_prev_wk',
+            'bb_bandwidth_prev_2wk', 'bb_bandwidth_prev_3wk']:
     print(f"\n{col}:")
     print(result[col].describe(percentiles=[.05, .25, .5, .75, .95]).to_string())
 
 print(f"\nweinstein_stage2 value counts:")
 print(result['weinstein_stage2'].value_counts().to_string())
+
+print(f"\nbb_squeeze value counts:")
+print(result['bb_squeeze'].value_counts(dropna=False).to_string())
 
 print(f"\nTotal symbols : {result['symbol'].nunique()}")
 print(f"Total rows    : {len(result)}")
