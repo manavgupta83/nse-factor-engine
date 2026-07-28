@@ -1,0 +1,45 @@
+{
+  "training_window": {
+    "start": "2005-11",
+    "end": "2019-12",
+    "n_months": 170
+  },
+  "min_crisis_duration_filter": 3,
+  "filter_changes": [],
+  "regime_counts": {
+    "Bull": 79,
+    "Choppy": 64,
+    "Crisis": 27
+  },
+  "regime_pct": {
+    "Bull": 46.47,
+    "Choppy": 37.65,
+    "Crisis": 15.88
+  },
+  "duration_stats": {
+    "Bull": {
+      "avg_duration": 6.08,
+      "max_duration": 21,
+      "n_episodes": 13
+    },
+    "Choppy": {
+      "avg_duration": 4.27,
+      "max_duration": 20,
+      "n_episodes": 15
+    },
+    "Crisis": {
+      "avg_duration": 13.5,
+      "max_duration": 24,
+      "n_episodes": 2
+    }
+  },
+  "stress_validation": {
+    "GFC onset (2008-10)": "Crisis",
+    "GFC trough (2009-01)": "Crisis",
+    "Euro crisis (2011-08)": "Choppy",
+    "Taper tantrum (2013-06)": "Choppy",
+    "NBFC crisis (2018-09)": "Choppy",
+    "Modi election rally (2014-06)": "Choppy",
+    "Bull run mid (2017-06)": "Bull"
+  }
+}

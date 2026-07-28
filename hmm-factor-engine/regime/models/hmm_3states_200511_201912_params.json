@@ -1,0 +1,90 @@
+{
+  "training_window": {
+    "start": "2005-11",
+    "end": "2019-12",
+    "n_months": 170
+  },
+  "hmm_features": [
+    "excess_return",
+    "realised_vol"
+  ],
+  "fit_summary": {
+    "n_states": 3,
+    "n_trials": 50,
+    "n_iter_per_trial": 200,
+    "best_log_likelihood": -323.071138
+  },
+  "state_labels": {
+    "2": "Bull",
+    "0": "Choppy",
+    "1": "Crisis"
+  },
+  "emission_means": {
+    "Bull": {
+      "excess_return": 0.009885,
+      "realised_vol": 0.115475
+    },
+    "Choppy": {
+      "excess_return": 0.003908,
+      "realised_vol": 0.186587
+    },
+    "Crisis": {
+      "excess_return": -0.004714,
+      "realised_vol": 0.375807
+    }
+  },
+  "emission_covariances_scaled": {
+    "Bull": [
+      [
+        0.248385,
+        -0.037048
+      ],
+      [
+        -0.037048,
+        0.055594
+      ]
+    ],
+    "Choppy": [
+      [
+        0.776081,
+        -0.104424
+      ],
+      [
+        -0.104424,
+        0.173499
+      ]
+    ],
+    "Crisis": [
+      [
+        3.704215,
+        -0.637201
+      ],
+      [
+        -0.637201,
+        1.636424
+      ]
+    ]
+  },
+  "transition_matrix": {
+    "Bull": {
+      "Bull": 0.794475,
+      "Choppy": 0.205525,
+      "Crisis": 0.0
+    },
+    "Choppy": {
+      "Bull": 0.248304,
+      "Choppy": 0.717839,
+      "Crisis": 0.033857
+    },
+    "Crisis": {
+      "Bull": 0.0,
+      "Choppy": 0.085195,
+      "Crisis": 0.914805
+    }
+  },
+  "initial_state_probs": {
+    "Bull": 0.0,
+    "Choppy": 1.0,
+    "Crisis": 0.0
+  }
+}
