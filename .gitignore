@@ -28,3 +28,7 @@ market_movement/data/*.parquet
 market_movement/data/*.pdf
 market_movement/data/last_run_date.txt
 market_movement/data/last_run_date_metrics.txt
+*.parquet
+*.pkl
+__pycache__/
+*.pyc
