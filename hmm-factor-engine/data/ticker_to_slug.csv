@@ -1,0 +1,730 @@
+nse_ticker,company_name,tijori_slug,match_confidence
+3MINDIA,3M India Ltd.,3m-india-limited,HIGH
+63MOONS,63 Moons Technologies Ltd.,63-moons-technologies-limited,HIGH
+8KMILES,SecureKloud Technologies Ltd,securekloud-technologies-limited,HIGH
+AARTIDRUGS,Aarti Drugs Ltd.,aarti-drugs-limited,HIGH
+AARTIIND,Aarti Industries Ltd.,aarti-industries-limited,HIGH
+AAVAS,Aavas Financiers Ltd.,aavas-financiers-limited,HIGH
+ABB,ABB India Ltd.,abb-india-limited,HIGH
+ABBOTINDIA,Abbott India Ltd.,abbott-india-limited,HIGH
+ABCAPITAL,Aditya Birla Capital Ltd.,aditya-birla-capital-limited,HIGH
+ABREL,Aditya Birla Real Estate (was Century Textiles),century-textiles-industries-limited,HIGH
+ACC,ACC Ltd.,acc-limited,HIGH
+ACCELYA,Accelya Solutions India Ltd.,accelya-kale-solutions-limited,HIGH
+ACMESOLAR,Acme Solar Holdings Ltd.,acme-solar-holdings-ltd,HIGH
+ACUTAAS,Acutaas Chemicals Ltd.,ami-organics-ltd,HIGH
+ADANIENSOL,Adani Energy Solutions Ltd.,adani-transmission-limited,HIGH
+ADANIENT,Adani Enterprises Ltd.,adani-enterprises-limited,HIGH
+ADANIPOWER,Adani Power Ltd.,adani-power-limited,HIGH
+ADLABS,Imagicaaworld Entertainment Ltd,imagicaaworld-entertainment-limited,HIGH
+ADOR,Ador Welding Ltd.,ador-welding-limited,HIGH
+ADVENZYMES,Advanced Enzyme Technologies Ltd.,advanced-enzyme-technologies-limited,HIGH
+AEGISLOG,Aegis Logistics Ltd.,aegis-logistics-limited,HIGH
+AFCONS,Afcons Infrastructure Ltd.,afcons-infrastructure-ltd,HIGH
+AFFLE,Affle (India) Ltd.,affle-india,HIGH
+AGUL,A G Universal Ltd,a-g-universal-limited,HIGH
+AHLUCONT,Ahluwalia Contracts (India) Ltd.,ahluwalia-contracts-india-limited,HIGH
+AIAENG,AIA Engineering Ltd.,aia-engineering-limited,HIGH
+AKSHOPTFBR,Aksh Optifibre Ltd.,aksh-optifibre-limited,HIGH
+AKZOINDIA,JSW Dulux Ltd (formerly Akzo Nobel India Ltd),jsw-dulux-limited,HIGH
+ALEMBICLTD,Alembic Ltd.,alembic-limited,HIGH
+ALKEM,Alkem Laboratories Ltd.,alkem-laboratories-limited,HIGH
+ALLCARGO,Allcargo Logistics Ltd.,allcargo-logistics-limited,HIGH
+ALSTOMT&D,GE Vernova T&D India Ltd,ge-vernova-tandd-india-limited,HIGH
+AMBER,Amber Enterprises India Ltd.,amber-enterprises-india-limited,HIGH
+AMBUJACEM,Ambuja Cements Ltd.,ambuja-cements-limited,HIGH
+ANANTRAJ,Anant Raj Ltd.,anant-raj-limited,HIGH
+ANDHRSUGAR,The Andhra Sugars Ltd.,the-andhra-sugars-limited,HIGH
+ANSALAPI,Ansal Properties & Infrastructure Ltd.,ansal-properties-and-infrastructure-limited,HIGH
+ANTHEM,Anthem Biosciences Ltd.,anthem-biosciences-ltd,HIGH
+APARINDS,Apar Industries Ltd.,apar-industries-limited,HIGH
+APLAPOLLO,APL Apollo Tubes Ltd.,apl-apollo-tubes-limited,HIGH
+APLLTD,Alembic Pharmaceuticals Ltd.,alembic-pharmaceuticals-limited,HIGH
+APOLLOHOSP,Apollo Hospitals Enterprise Ltd.,apollo-hospitals-enterprise-limited,HIGH
+APOLLOTYRE,Apollo Tyres Ltd.,apollo-tyres-limited,HIGH
+APTECHT,Aptech Ltd.,aptech-limited,HIGH
+ARCHIES,Archies Ltd.,archies-limited,HIGH
+ARVIND,Arvind Ltd.,arvind-limited,HIGH
+ASAHIINDIA,Asahi India Glass Ltd.,asahi-india-glass-limited,HIGH
+ASHIANA,Ashiana Housing Ltd.,ashiana-housing-limited,HIGH
+ASHOKLEY,Ashok Leyland Ltd.,ashok-leyland-limited,HIGH
+ASIANHOTNR,Asian Hotels (North) Ltd.,asian-hotels-north-limited,HIGH
+ASIANPAINT,Asian Paints Ltd.,asian-paints-limited,HIGH
+ASTERDM,Aster DM Healthcare Ltd.,aster-dm-healthcare-limited,HIGH
+ATGL,Adani Total Gas Ltd.,adani-total-gas-limited,HIGH
+ATLASCYCLE,Atlas Cycles (Haryana) Ltd.,atlas-cycles-haryana-limited,HIGH
+ATUL,Atul Ltd.,atul-limited,HIGH
+ATULAUTO,Atul Auto Ltd.,atul-auto-limited,HIGH
+AUBANK,AU Small Finance Bank Ltd.,au-small-finance-bank-limited,HIGH
+AUTOAXLES,Automotive Axles Ltd.,automotive-axles-limited,HIGH
+AVANTIFEED,Avanti Feeds Ltd.,avanti-feeds-limited,HIGH
+AWFIS,Awfis Space Solutions Ltd.,awfis-space-solutions-ltd,HIGH
+AXISBANK,Axis Bank Ltd.,axis-bank-limited,HIGH
+AZAD,Azad Engineering Ltd.,azad-engineering-ltd,HIGH
+BAJAJ,Bajaj Holdings & Investment Ltd.,bajaj-holdings-investment-limited,HIGH
+BAJAJ-AUTO,Bajaj Auto Ltd.,bajaj-auto-limited,HIGH
+BAJAJHIND,Bajaj Hindusthan Sugar Ltd.,bajaj-hindusthan-sugar-limited,HIGH
+BAJAJHLDNG,Bajaj Holdings & Investment Ltd.,bajaj-holdings-investment-limited,HIGH
+BAJFINANCE,Bajaj Finance Ltd.,bajaj-finance-limited,HIGH
+BALAJI,Balaji Amines Ltd.,balaji-amines-limited,HIGH
+BALAJITELE,Balaji Telefilms Ltd.,balaji-telefilms-limited,HIGH
+BALAMINES,Balaji Amines Ltd.,balaji-amines-limited,HIGH
+BALMLAWRIE,Balmer Lawrie & Co. Ltd.,balmer-lawrie-company-limited,HIGH
+BALRAMCHIN,Balrampur Chini Mills Ltd.,balrampur-chini-mills-limited,HIGH
+BANARISUG,Bannari Amman Sugars Ltd.,bannari-amman-sugars-limited,HIGH
+BANCOINDIA,Banco Products (India) Ltd.,banco-products-india-limited,HIGH
+BANKBARODA,Bank of Baroda,bank-of-baroda,HIGH
+BANKINDIA,Bank of India,bank-of-india,HIGH
+BASF,BASF India Ltd.,basf-india-limited,HIGH
+BATAINDIA,Bata India Ltd.,bata-india-limited,HIGH
+BAYERCROP,Bayer CropScience Ltd.,bayer-cropscience-limited,HIGH
+BBTC,Bombay Burmah Trading Corp. Ltd.,bombay-burmah-trading-corporation-limited,HIGH
+BCG,Brightcom Group Ltd.,brightcom-group-limited,HIGH
+BDL,Bharat Dynamics Ltd.,bharat-dynamics-limited,HIGH
+BEL,Bharat Electronics Ltd.,bharat-electronics-limited,HIGH
+BEML,BEML Ltd.,beml-limited,HIGH
+BEPL,Bhansali Engineering Polymers Ltd.,bhansali-engineering-polymers-limited,HIGH
+BERGEPAINT,Berger Paints India Ltd.,berger-paints-india-limited,HIGH
+BFUTILITIE,BF Utilities Ltd.,bf-utilities-limited,HIGH
+BGRENERGY,BGR Energy Systems Ltd.,bgr-energy-systems-limited,HIGH
+BHARATFORG,Bharat Forge Ltd.,bharat-forge-limited,HIGH
+BHARATRAS,Bharat Rasayan Ltd.,bharat-rasayan-limited,HIGH
+BHARTIARTL,Bharti Airtel Ltd.,bharti-airtel-limited,HIGH
+BHEL,Bharat Heavy Electricals Ltd.,bharat-heavy-electricals-limited,HIGH
+BI,Bilcare Ltd.,bilcare-ltd,HIGH
+BIOCON,Biocon Ltd.,biocon-limited,HIGH
+BIRLACORPN,Birla Corporation Ltd.,birla-corporation-limited,HIGH
+BIRLAMONEY,Aditya Birla Money Ltd.,aditya-birla-money-limited,HIGH
+BLISSGVS,Bliss GVS Pharma Ltd.,bliss-gvs-pharma-limited,HIGH
+BLKASHYAP,B.L. Kashyap & Sons Ltd.,b-l-kashyap-and-sons-limited,HIGH
+BLUEDART,Blue Dart Express Ltd.,blue-dart-express-limited,HIGH
+BLUEJET,Blue Jet Healthcare Ltd.,blue-jet-healthcare-ltd,HIGH
+BLUESTARCO,Blue Star Ltd.,blue-star-limited,HIGH
+BOMDYEING,Bombay Dyeing & Mfg. Co. Ltd.,the-bombay-dyeing-and-manufacturing-company-limited,HIGH
+BOSCH-HCIL,Johnson Controls-Hitachi Air Conditioning India Ltd.,johnson-controlshitachi-air-conditioning-india-limited,HIGH
+BOSCHLTD,Bosch Ltd.,bosch-limited,HIGH
+BPCL,Bharat Petroleum Corp. Ltd.,bharat-petroleum-corporation-limited,HIGH
+BRIGADE,Brigade Enterprises Ltd.,brigade-enterprises-limited,HIGH
+BRITANNIA,Britannia Industries Ltd.,britannia-industries-limited,HIGH
+BSE,BSE Ltd.,bse-limited,HIGH
+BSOFT,Birlasoft Ltd.,birlasoft-limited,HIGH
+CAMLINFINE,Camlin Fine Sciences Ltd.,camlin-fine-sciences-limited,HIGH
+CANBK,Canara Bank,canara-bank,HIGH
+CANFINHOME,Can Fin Homes Ltd.,can-fin-homes-limited,HIGH
+CARTRADE,CarTrade Tech Ltd.,cartrade-tech-ltd,HIGH
+CASTROLIND,Castrol India Ltd.,castrol-india-limited,HIGH
+CCAVENUE,Infibeam Avenues Ltd,infibeam-avenues-limited,HIGH
+CCL,CCL Products (India) Ltd.,ccl-products-india-limited,HIGH
+CDSL,Central Depository Services (India) Ltd.,central-depository-services-india-ltd,HIGH
+CEATLTD,CEAT Ltd.,ceat-limited,HIGH
+CELLO,Cello World Ltd.,cello-world-ltd,HIGH
+CEMPRO,ITD Cementation India Ltd.,itd-cementation-india-limited,HIGH
+CENTENKA,Century Enka Ltd.,century-enka-limited,HIGH
+CENTRALBK,Central Bank of India,central-bank-of-india,HIGH
+CENTURYTEX,Century Textiles Industries Ltd. (now ABREL),century-textiles-industries-limited,HIGH
+CERA,Cera Sanitaryware Ltd.,cera-sanitaryware-limited,HIGH
+CESC,CESC Ltd.,cesc-limited,HIGH
+CGCL,Capri Global Capital Ltd.,capri-global-capital-limited,HIGH
+CGPOWER,CG Power and Industrial Solutions Ltd.,cg-power-and-industrial-solutions-limited,HIGH
+CHALET,Chalet Hotels Ltd.,chalet-hotels,HIGH
+CHAMBLFERT,Chambal Fertilizers & Chemicals Ltd.,chambal-fertilizers-chemicals-limited,HIGH
+CHEMPLASTS,Chemplast Sanmar Ltd.,chemplast-sanmar-ltd,HIGH
+CHENNPETRO,Chennai Petroleum Corp. Ltd.,chennai-petroleum-corporation-limited,HIGH
+CHOLAFIN,Cholamandalam Inv. & Finance Co. Ltd.,cholamandalam-investment-and-finance-company-limited,HIGH
+CHOLAHLDNG,Cholamandalam Financial Holdings Ltd.,cholamandalam-financial-holdings-ltd,HIGH
+CINEVISTA,Cinevista Ltd.,cinevista-limited,HIGH
+CIPLA,Cipla Ltd.,cipla-limited,HIGH
+COALINDIA,Coal India Ltd.,coal-india-limited,HIGH
+COCHINSHIP,Cochin Shipyard Ltd.,cochin-shipyard-ltd,HIGH
+COFFEEDAY,Coffee Day Enterprises Ltd.,coffee-day-enterprises-limited,HIGH
+COFORGE,Coforge Ltd.,coforge-limited,HIGH
+COLPAL,Colgate-Palmolive (India) Ltd.,colgate-palmolive-india-limited,HIGH
+CONCOR,Container Corporation of India Ltd.,container-corporation-of-india-limited,HIGH
+CONSOFINVT,Consolidated Finvest & Holdings Ltd.,consolidated-finvest-holdings-limited,HIGH
+COROMANDEL,Coromandel International Ltd.,coromandel-international-limited,HIGH
+CREDITACC,CreditAccess Grameen Ltd.,creditaccess-grameen-limited,HIGH
+CRISIL,CRISIL Ltd.,crisil-limited,HIGH
+CROMPTON,Crompton Greaves Consumer Electricals Ltd.,crompton-greaves-consumer-electricals-ltd,HIGH
+CSBBANK,CSB Bank Ltd.,csb-bank,HIGH
+CUB,City Union Bank Ltd.,city-union-bank-limited,HIGH
+CUMMINSIND,Cummins India Ltd.,cummins-india-limited,HIGH
+CYBERTECH,Cybertech Systems and Software Ltd.,cybertech-systems-and-software-limited,HIGH
+DABUR,Dabur India Ltd.,dabur-india-limited,HIGH
+DALMIASUG,Dalmia Bharat Sugar & Industries Ltd.,dalmia-bharat-sugar-and-industries-limited,HIGH
+DATAPATTNS,Data Patterns (India) Ltd.,data-patterns-india-ltd,HIGH
+DBCORP,DB Corp Ltd.,db-corp-limited,HIGH
+DBL,Dilip Buildcon Ltd.,dilip-buildcon-limited,HIGH
+DBREALTY,DB Realty Ltd.,db-realty-limited,HIGH
+DCAL,Dishman Carbogen Amcis Ltd.,dishman-carbogen-amics-limited,HIGH
+DCW,DCW Ltd.,dcw-limited,HIGH
+DEEPAKFERT,Deepak Fertilizers & Petrochemicals Corp. Ltd.,deepak-fertilizers-and-petrochemicals-corporation-limited,HIGH
+DEEPAKNTR,Deepak Nitrite Ltd.,deepak-nitrite-limited,HIGH
+DELTACORP,Delta Corp Ltd.,delta-corp-limited,HIGH
+DEN,Den Networks Ltd.,den-networks-limited,HIGH
+DEVYANI,Devyani International Ltd.,devyani-international-ltd,HIGH
+DHAMPURSUG,Dhampur Sugar Mills Ltd.,dhampur-sugar-mills-limited,HIGH
+DHANBANK,Dhanlaxmi Bank Ltd.,dhanlaxmi-bank-limited,HIGH
+DHANLAXMI,Dhanlaxmi Bank Ltd.,dhanlaxmi-bank-limited,HIGH
+DHANUKA,Dhanuka Agritech Ltd.,dhanuka-agritech-limited,HIGH
+DHUNINV,Dhunseri Investments Ltd.,dhunseri-investments-limited,HIGH
+DICIND,DIC India Ltd.,dic-india-limited,HIGH
+DIGJAMLMTD,Digjam Ltd.,digjam-ltd,HIGH
+DISHTV,Dish TV India Ltd.,dish-tv-india-limited,HIGH
+DLF,DLF Ltd.,dlf-limited,HIGH
+DMART,Avenue Supermarts Ltd.,avenue-supermarts-limited,HIGH
+DREDGECORP,Dredging Corporation of India Ltd.,dredging-corporation-of-india-limited,HIGH
+DRREDDY,Dr. Reddy's Laboratories Ltd.,dr-reddys-laboratories-limited,HIGH
+DYNAMATECH,Dynamatic Technologies Ltd.,dynamatic-technology-limited,HIGH
+ECLERX,eClerx Services Ltd.,eclerx-services-limited,HIGH
+EICHERMOT,Eicher Motors Ltd.,eicher-motors-limited,HIGH
+EIDPARRY,E.I.D.-Parry (India) Ltd.,e-i-d-parry-india-limited,HIGH
+EIHOTEL,EIH Ltd.,eih-limited,HIGH
+ELCIDIN,Elcid Investments Ltd.,elcid-investments-ltd,HIGH
+ELECON,Elecon Engineering Co. Ltd.,elecon-engineering-company-limited,HIGH
+ELECTCAST,Electrosteel Castings Ltd.,electrosteel-castings-limited,HIGH
+ELGIEQUIP,Elgi Equipments Ltd.,elgi-equipments-limited,HIGH
+ELGIRUBCO,Elgi Rubber Company Ltd.,elgi-rubber-company-limited,HIGH
+ENDURANCE,Endurance Technologies Ltd.,endurance-technologies-limited,HIGH
+ENERGY,Energy Development Company Ltd.,energy-development-company-limited,HIGH
+ENGINERSIN,Engineers India Ltd.,engineers-india-limited,HIGH
+EQUITAS,Equitas Holdings Ltd.,equitas-holding-limited,HIGH
+EQUITASBNK,Equitas Small Finance Bank Ltd.,equitas-small-finance-bank-limited,HIGH
+ERIS,Eris Lifesciences Ltd.,eris-lifesciences-limited,HIGH
+ESABINDIA,Esab India Ltd.,esab-india-limited,HIGH
+ESCORTS,Escorts Kubota Ltd.,escorts-kubota-limited,HIGH
+EXCEL,Excel Industries Ltd,excel-industries-limited,HIGH
+EXCELINDUS,Excel Industries Ltd.,excel-industries-limited,HIGH
+EXIDEIND,Exide Industries Ltd.,exide-industries-limited,HIGH
+FACT,Fertilisers & Chemicals Travancore Ltd.,fertilisers-and-chemicals-travancore-limited,HIGH
+FDC,FDC Ltd.,fdc-limited,HIGH
+FEDERALBNK,The Federal Bank Ltd.,the-federal-bank-limited,HIGH
+FEL,Future Enterprises Ltd.,future-enterprises-limited,HIGH
+FINCABLES,Finolex Cables Ltd.,finolex-cables-limited,HIGH
+FINEORG,Fine Organic Industries Ltd.,fine-organic-industries-limited,HIGH
+FIRSTCRY,Brainbees Solutions Ltd. (FirstCry),brainbees-solutions-limited,HIGH
+FLEXITUFF,Flexituff Ventures International Ltd.,flexituff-ventures-international-limited,HIGH
+FLFL,Future Lifestyle Fashions Ltd.,future-lifestyle-fashions-limited,HIGH
+FLUOROCHEM,Gujarat Fluorochemicals Ltd.,gujarat-fluorochemicals-ltd,HIGH
+FMGOETZE,Federal-Mogul Goetze (India) Ltd.,federal-mogul-goetze-india-limited,HIGH
+FORTIS,Fortis Healthcare Ltd.,fortis-healthcare-limited,HIGH
+FOSECOIND,Foseco India Ltd.,foseco-india-limited,HIGH
+GABRIEL,Gabriel India Ltd.,gabriel-india-limited,HIGH
+GAEL,Gujarat Ambuja Exports Ltd.,gujarat-ambuja-exports-limited,HIGH
+GAIL,GAIL (India) Ltd.,gail-india-limited,HIGH
+GALAXYSURF,Galaxy Surfactants Ltd.,galaxy-surfactants-ltd,HIGH
+GANESHBE,Ganesh Benzoplast Ltd.,ganesh-benzoplast-limited,HIGH
+GARFIBRES,Garware Technical Fibres Ltd.,garware-wall-ropes-limited,HIGH
+GARWARE,Garware Technical Fibres Ltd.,garware-wall-ropes-limited,HIGH
+GATEWAY,Gateway Distriparks Ltd.,gateway-distriparks-ltd,HIGH
+GAYAPROJ,Gayatri Projects Ltd.,gayatri-projects-limited,HIGH
+GEOJITFSL,Geojit Financial Services Ltd.,geojit-bnp-paribas-financial-services-limited,HIGH
+GESHIP,The Great Eastern Shipping Co. Ltd.,the-great-eastern-shipping-company-limited,HIGH
+GHCL,GHCL Ltd.,ghcl-limited,HIGH
+GICRE,General Insurance Corporation of India,general-insurance-corporation-of-india,HIGH
+GILLETTE,Gillette India Ltd.,gillette-india-limited,HIGH
+GLAND,Gland Pharma Ltd.,gland-pharma-limited,HIGH
+GLAXO,GSK Pharmaceuticals Ltd.,glaxosmithkline-pharmaceuticals-limited,HIGH
+GLENMARK,Glenmark Pharmaceuticals Ltd.,glenmark-pharmaceuticals-limited,HIGH
+GLFL,Gujarat Lease Financing Ltd.,gujarat-lease-financing-limited,HIGH
+GLOBAL,Global Education Ltd.,global-education-ltd,HIGH
+GMDCLTD,GMDC Ltd.,gujarat-mineral-development-corporation-limited,HIGH
+GMMPFAUDLR,GMM Pfaudler Ltd.,gmm-pfaudler-limited,HIGH
+GNFC,GNFC Ltd.,gujarat-narmada-valley-fertilizers-chemicals-limited,HIGH
+GODFRYPHLP,Godfrey Phillips India Ltd.,godfrey-phillips-india-limited,HIGH
+GODREJAGRO,Godrej Agrovet Ltd.,godrej-agrovet-ltd,HIGH
+GODREJCP,Godrej Consumer Products Ltd.,godrej-consumer-products-limited,HIGH
+GODREJIND,Godrej Industries Ltd.,godrej-industries-limited,HIGH
+GOKEX,Gokaldas Exports Ltd.,gokaldas-exports-limited,HIGH
+GOLDENTOBC,Golden Tobacco Ltd.,golden-tobacco-limited,HIGH
+GOODYEAR,Goodyear India Ltd.,goodyear-india-limited,HIGH
+GPPL,Gujarat Pipavav Port Ltd.,gujarat-pipavav-port-limited,HIGH
+GRANULES,Granules India Ltd.,granules-india-limited,HIGH
+GRAPHITE,Graphite India Ltd.,graphite-india-limited,HIGH
+GRASIM,Grasim Industries Ltd.,grasim-industries-limited,HIGH
+GREAVESCOT,Greaves Cotton Ltd.,greaves-cotton-limited,HIGH
+GREENPLY,Greenply Industries Ltd.,greenply-industries-limited,HIGH
+GRINDWELL,Grindwell Norton Ltd.,grindwell-norton-limited,HIGH
+GRINFRA,GR Infraprojects Ltd.,gr-infraprojects-ltd,HIGH
+GRWRHITECH,Garware Hi-Tech Films Ltd.,garware-polyester-limited,HIGH
+GSFC,GSFC Ltd.,gujarat-state-fertilizers-chemicals-limited,HIGH
+GSKCONS,GlaxoSmithKline Pharmaceuticals Ltd,glaxosmithkline-pharmaceuticals-limited,HIGH
+GTL,GTL Ltd.,gtl-limited,HIGH
+GUJALKALI,Gujarat Alkalies And Chemicals Ltd.,gujarat-alkalies-and-chemicals-limited,HIGH
+GUJENERGY,Gujarat Industries Power Company Ltd.,gujarat-industries-power-company-limited,HIGH
+GUJGASLTD,Gujarat Gas Ltd.,gujarat-gas-limited,HIGH
+GVKPIL,GVK Power & Infrastructure Ltd.,gvk-power-infrastructure-limited,HIGH
+GVT&D,GE T&D India Ltd,ge-tandd-india-limited,HIGH
+HAL,Hindustan Aeronautics Ltd.,hindustan-aeronautics-limited,HIGH
+HAPPSTMNDS,Happiest Minds Technologies Ltd.,happiest-minds-technologies-limited,HIGH
+HARRMALAYA,Harrisons Malayalam Ltd.,harrisons-malayalam-limited,HIGH
+HATHWAY,Hathway Cable & Datacom Ltd.,hathway-cable-datacom-limited,HIGH
+HATSUN,Hatsun Agro Product Ltd.,hatsun-agro-product-limited,HIGH
+HAVELLS,Havells India Ltd.,havells-india-limited,HIGH
+HCC,Hindustan Construction Company Ltd.,hindustan-construction-company-limited,HIGH
+HCL-INSYS,HCL Infosystems Ltd.,hcl-infosystems-limited,HIGH
+HCLTECH,HCL Technologies Ltd.,hcl-technologies-limited,HIGH
+HDFC,HDFC Ltd. (merged into HDFCBANK),housing-development-finance-corporation-limited,HIGH
+HDFCAMC,HDFC Asset Management Co. Ltd.,hdfc-asset-management-company-limited,HIGH
+HDFCBANK,HDFC Bank Ltd.,hdfc-bank-limited,HIGH
+HDFCLIFE,HDFC Life Insurance Co. Ltd.,hdfc-standard-life-insurance-company-limited,HIGH
+HDIL,Housing Development and Infrastructure Ltd.,housing-development-and-infrastructure-limited,HIGH
+HEALTHCARE,Healthcare Global Enterprises Ltd.,healthcare-global-enterprises-limited,HIGH
+HEG,HEG Ltd.,heg-limited,HIGH
+HEIDELBERG,HeidelbergCement India Ltd.,heidelberg-cement-india-limited,HIGH
+HERITGFOOD,Heritage Foods Ltd.,heritage-foods-limited,HIGH
+HEROMOTOCO,Hero MotoCorp Ltd.,hero-motocorp-limited,HIGH
+HEXT,Hexaware Technologies Ltd.,hexaware-technologies-limited,HIGH
+HGINFRA,H.G. Infra Engineering Ltd.,h-g-infra-engineering-limited,HIGH
+HGS,Hinduja Global Solutions Ltd.,hinduja-global-solutions-limited,HIGH
+HIKAL,Hikal Ltd.,hikal-limited,HIGH
+HIMATSEIDE,Himatsingka Seide Ltd.,himatsingka-seide-limited,HIGH
+HINDALCO,Hindalco Industries Ltd.,hindalco-industries-limited,HIGH
+HINDCOPPER,Hindustan Copper Ltd.,hindustan-copper-limited,HIGH
+HINDOILEXP,Hindustan Oil Exploration Company Ltd.,hindustan-oil-exploration-company-limited,HIGH
+HINDPETRO,Hindustan Petroleum Corp. Ltd.,hindustan-petroleum-corporation-limited,HIGH
+HINDUNILVR,Hindustan Unilever Ltd.,hindustan-unilever-limited,HIGH
+HINDZINC,Hindustan Zinc Ltd.,hindustan-zinc-limited,HIGH
+HITECHCORP,Hitech Corporation Ltd.,hitech-corporation-limited,HIGH
+HMT,HMT Ltd.,hmt-limited,HIGH
+HMVL,Hindustan Media Ventures Ltd.,hindustan-media-ventures-limited,HIGH
+HONASA,Honasa Consumer Ltd. (Mamaearth),honasa-consumer-ltd,HIGH
+HONAUT,Honeywell Automation India Ltd.,honeywell-automation-india-limited,HIGH
+HSCL,Himadri Speciality Chemical Ltd.,himadri-speciality-chemical-limited,HIGH
+HTMEDIA,HT Media Ltd.,ht-media-limited,HIGH
+HUBTOWN,Hubtown Ltd.,hubtown-limited,HIGH
+IBREALEST,Embassy Developments Ltd,embassy-developments-limited,HIGH
+IBULLSLTD,Indiabulls Enterprises Ltd,indiabulls-enterprises-limited,HIGH
+ICICI,ICICI Bank Ltd. (alias),icici-bank-limited,HIGH
+ICICIBANK,ICICI Bank Ltd.,icici-bank-limited,HIGH
+ICICIGI,ICICI Lombard General Insurance Co. Ltd.,icici-lombard-general-insurance-company-limited,HIGH
+ICICIPRULI,ICICI Prudential Life Insurance Co. Ltd.,icici-prudential-life-insurance-company-limited,HIGH
+ICIL,Indo Count Industries Ltd.,indo-count-industries-limited,HIGH
+ICRA,ICRA Ltd.,icra-limited,HIGH
+IDBI,IDBI Bank Ltd.,idbi-bank-limited,HIGH
+IDEA,Vodafone Idea Ltd.,vodafone-idea-limited,HIGH
+IDEAFORGE,Ideaforge Technology Ltd.,ideaforge-technology-ltd,HIGH
+IDFCFIRSTB,IDFC First Bank Ltd.,idfc-bank-limited,HIGH
+IFBIND,IFB Industries Ltd.,ifb-industries-limited,HIGH
+IFCI,IFCI Ltd.,ifci-limited,HIGH
+IGARASHI,Igarashi Motors India Ltd.,igarashi-motors-india-limited,HIGH
+IGL,Indraprastha Gas Ltd.,indraprastha-gas-limited,HIGH
+IGPL,IG Petrochemicals Ltd.,ig-petrochemicals-limited,HIGH
+IIFL,IIFL Finance Ltd.,iifl-holdings-limited,HIGH
+IL&FSTRANS,IL&FS Transportation Networks Ltd.,ilfs-transportation-networks-limited,HIGH
+IMAGICAA,Imagicaaworld Entertainment Ltd,imagicaaworld-entertainment-limited,HIGH
+IMFA,Indian Metals & Ferro Alloys Ltd,indian-metals-and-ferro-alloys-limited,HIGH
+INDHOTEL,The Indian Hotels Co. Ltd.,the-indian-hotels-company-limited,HIGH
+INDIACEM,The India Cements Ltd.,the-india-cements-limited,HIGH
+INDIAGLYCO,India Glycols Ltd.,india-glycols-limited,HIGH
+INDIAMART,IndiaMART InterMESH Ltd.,indiamart-intermesh-limited,HIGH
+INDIANB,Indian Bank,indian-bank,HIGH
+INDIANCARD,Indian Card Clothing Company Ltd.,indian-card-clothing-company-limited,HIGH
+INDIGO,InterGlobe Aviation Ltd.,interglobe-aviation-limited,HIGH
+INDOCO,Indoco Remedies Ltd.,indoco-remedies-limited,HIGH
+INDORAMA,Indo Rama Synthetics (India) Ltd.,indo-rama-synthetics-india-limited,HIGH
+INDSWFTLAB,Ind-Swift Laboratories Ltd.,indswift-laboratories-limited,HIGH
+INDUSINDBK,IndusInd Bank Ltd.,indusind-bank-limited,HIGH
+INDUSTOWER,Indus Towers Ltd.,indus-towers-limited,HIGH
+INFIBEAM,Infibeam Avenues Ltd,infibeam-avenues-limited,HIGH
+INFOMEDIA,Infomedia Press Ltd.,infomedia-press-limited,HIGH
+INFY,Infosys Ltd.,infosys-limited,HIGH
+INGERRAND,Ingersoll Rand (India) Ltd,ingersoll-rand-limited,HIGH
+INOXWIND,Inox Wind Ltd.,inox-wind-ltd,HIGH
+INTELLECT,Intellect Design Arena Ltd.,intellect-design-arena-limited,HIGH
+IOB,Indian Overseas Bank,indian-overseas-bank,HIGH
+IOC,Indian Oil Corporation Ltd.,indian-oil-corporation-limited,HIGH
+IONEXCHANG,Ion Exchange (India) Ltd.,ion-exchange-india-limited,HIGH
+IPCALAB,Ipca Laboratories Ltd.,ipca-laboratories-limited,HIGH
+IRCON,Ircon International Ltd.,ircon-international-limited,HIGH
+IRCTC,IRCTC Ltd.,irctc-limited,HIGH
+ITC,ITC Ltd.,itc-limited,HIGH
+ITCHOTELS,ITC Hotels Ltd.,itc-hotels-ltd,HIGH
+ITDC,India Tourism Development Corporation Ltd.,india-tourism-development-corporation-limited,HIGH
+ITDCEMEN,Cement Products of India (CEMPRO),cement-products-of-india-limited,HIGH
+ITI,ITI Ltd.,iti-limited,HIGH
+ITIETF,Nippon India ETF Nifty IT,nippon-india-etf-nifty-it,HIGH
+J&KBANK,Jammu & Kashmir Bank Ltd.,jammu-and-kashmir-bank-limited,HIGH
+JAGRAN,Jagran Prakashan Ltd.,jagran-prakashan-limited,HIGH
+JAICORPLTD,Jai Corp Ltd.,jai-corp-limited,HIGH
+JBCHEPHARM,J.B. Chemicals & Pharmaceuticals Ltd.,jb-chemicals-pharmaceuticals-limited,HIGH
+JBMA,JBM Auto Ltd.,jbm-auto-limited,HIGH
+JGCHEM,JG Chemicals Ltd.,jg-chemicals-ltd,HIGH
+JINDALPHOT,Jindal Photo Ltd.,jindal-photo-limited,HIGH
+JINDALPOLY,Jindal Poly Films Ltd.,jindal-poly-films-limited,HIGH
+JINDALSAW,Jindal Saw Ltd.,jindal-saw-limited,HIGH
+JINDALSTEL,Jindal Steel & Power Ltd.,jindal-steel-and-power-limited,HIGH
+JISLJALEQS,Jain Irrigation Systems Ltd.,jain-irrigation-systems-limited,HIGH
+JKCEMENT,JK Cement Ltd.,jk-cement-limited,HIGH
+JKPAPER,JK Paper Ltd.,jk-paper-limited,HIGH
+JKTYRE,JK Tyre & Industries Ltd.,jk-tyre-and-industries-limited,HIGH
+JPPOWER,Jaiprakash Power Ventures Ltd.,jaiprakash-power-ventures-limited,HIGH
+JSL,Jindal Stainless Ltd.,jindal-stainless-limited,HIGH
+JSWDULUX,JSW Paints / Akzo Nobel India (Dulux),jsw-paints-akzo-nobel-india,HIGH
+JSWHL,JSW Holdings Ltd.,jsw-holdings-limited,HIGH
+JSWSTEEL,JSW Steel Ltd.,jsw-steel-limited,HIGH
+JTEKTINDIA,JTEKT India Ltd.,jtekt-india-limited,HIGH
+JUBLFOOD,Jubilant FoodWorks Ltd.,jubilant-foodworks-limited,HIGH
+JUBLINGREA,Jubilant Ingrevia Ltd.,jubilant-ingrevia-limited,HIGH
+JUBLINGRY,Jubilant Ingrevia Ltd.,jubilant-ingrevia-limited,HIGH
+JYOTISTRUC,Jyoti Structures Ltd.,jyoti-structures-limited,HIGH
+KAJARIACER,Kajaria Ceramics Ltd.,kajaria-ceramics-limited,HIGH
+KANSAINER,Kansai Nerolac Paints Ltd.,kansai-nerolac-paints-limited,HIGH
+KARURVYSYA,Karur Vysya Bank Ltd.,karur-vysya-bank-limited,HIGH
+KCP,KCP Ltd.,kcp-limited,HIGH
+KEI,KEI Industries Ltd.,kei-industries-limited,HIGH
+KENNAMET,Kennametal India Ltd,kennametal-india-limited,HIGH
+KIOCL,KIOCL Ltd.,kiocl-limited,HIGH
+KIRLOSBROS,Kirloskar Brothers Ltd.,kirloskar-brothers-limited,HIGH
+KITEX,Kitex Garments Ltd.,kitex-garments-limited,HIGH
+KKCL,Kewal Kiran Clothing Ltd.,kewal-kiran-clothing-limited,HIGH
+KMSUGAR,K.M. Sugar Mills Ltd.,kmsugar-mills-limited,HIGH
+KNRCON,KNR Constructions Ltd.,knr-constructions-limited,HIGH
+KOHINOOR,Kohinoor Foods Ltd.,kohinoor-foods-limited,HIGH
+KOPRAN,Kopran Ltd.,kopran-limited,HIGH
+KOTAKBANK,Kotak Mahindra Bank Ltd.,kotak-mahindra-bank-limited,HIGH
+KOTHARIPRO,Kothari Products Ltd.,kothari-products-limited,HIGH
+KPEL,KP Energy Ltd.,kp-energy-limited,HIGH
+KPITTECH,KPIT Technologies Ltd.,kpit-technologies-limited,HIGH
+KPL,Kothari Petrochemicals Ltd.,kothari-petrochemicals-limited,HIGH
+KRBL,KRBL Ltd.,krbl-limited,HIGH
+KSB,KSB Ltd.,ksb-pumps-limited,HIGH
+KTKBANK,Karnataka Bank Ltd.,karnataka-bank,HIGH
+LALPATHLAB,Dr. Lal Pathlabs Ltd.,dr-lal-pathlabs-limited,HIGH
+LANDMARK,Landmark Cars Ltd.,landmark-cars-ltd,HIGH
+LANDSMILL,Bombay Dyeing and Mfg Co Ltd,bombay-dyeing-and-mfg-co-limited,HIGH
+LAOPALA,La Opala RG Ltd.,la-opala-rg-limited,HIGH
+LAURUSLABS,Laurus Labs Ltd.,laurus-labs-limited,HIGH
+LEMONTREE,Lemon Tree Hotels Ltd.,lemon-tree-hotels-limited,HIGH
+LGBBROSLTD,L.G.Balakrishnan & Bros Ltd,l-g-balakrishnan-and-bros-limited,HIGH
+LICHSGFIN,LIC Housing Finance Ltd.,lic-housing-finance-limited,HIGH
+LINDEINDIA,Linde India Ltd.,linde-india-limited,HIGH
+LT,Larsen & Toubro Ltd.,larsen-and-toubro-limited,HIGH
+LTF,L&T Finance Holdings Ltd.,l-and-t-finance-holdings-limited,HIGH
+LTM,LTI Mindtree Ltd,lti-mindtree-limited,HIGH
+LTTS,L&T Technology Services Ltd.,larsen-toubro-technology-services,HIGH
+LUPIN,Lupin Ltd.,lupin-limited,HIGH
+LUXIND,Lux Industries Ltd.,lux-industries-limited,HIGH
+M& M,Mahindra & Mahindra Ltd.,mahindra-mahindra-limited,HIGH
+M&M,Mahindra & Mahindra Ltd.,mahindra-mahindra-limited,HIGH
+MAFATIND,Mafatlal Industries Ltd.,mafatlal-industries-limited,HIGH
+MAHABANK,Bank of Maharashtra,bank-of-maharashtra,HIGH
+MAHSCOOTER,Maharashtra Scooters Ltd.,maharashtra-scooters-limited,HIGH
+MAHSEAMLES,Maharashtra Seamless Ltd.,maharashtra-seamless-limited,HIGH
+MANPASAND,Manpasand Beverages Ltd,manpasand-beverages-limited,HIGH
+MARALOVER,Maral Overseas Ltd.,maral-industries-limited,HIGH
+MARICO,Marico Ltd.,marico-limited,HIGH
+MARKSANS,Marksans Pharma Ltd.,marksans-pharma-limited,HIGH
+MARUTI,Maruti Suzuki India Ltd.,maruti-suzuki-india-limited,HIGH
+MASFIN,MAS Financial Services Ltd.,mas-financial-services-limited,HIGH
+MASTEK,Mastek Ltd.,mastek-limited,HIGH
+MAXIND,Max India Ltd.,max-india-ltd,HIGH
+MAYURUNIQ,Mayur Uniquoters Ltd.,mayur-uniquoters-ltd,HIGH
+MBEL,McNally Bharat Engineering Company Ltd.,mcnally-bharat-engineering-company-limited,HIGH
+MBLINFRA,MBL Infrastructure Ltd.,mbl-infrastructures-limited,HIGH
+MCDOWELL,United Spirits Ltd. (McDowells),united-spirits-limited,HIGH
+MCLEODRUSS,Mcleod Russel India Ltd.,mcleod-russel-india-limited,HIGH
+MCX,Multi Commodity Exchange Of India Ltd.,multi-commodity-exchange-of-india-ltd,HIGH
+MEDPLUS,MedPlus Health Services Ltd.,medplus-health-services-ltd,HIGH
+MERCK,Procter & Gamble Health Ltd,procter-and-gamble-health-limited,HIGH
+METROBRAND,Metro Brands Ltd.,metro-brands-ltd,HIGH
+METROPOLIS,Metropolis Healthcare Ltd.,metropolis-healthcare-limited,HIGH
+MFSL,Max Financial Services Ltd.,max-financial-services-limited,HIGH
+MGL,Mahanagar Gas Ltd.,mahanagar-gas-limited,HIGH
+MIDHANI,Mishra Dhatu Nigam Ltd.,mishra-dhatu-nigam-limited,HIGH
+MIRZAINT,Mirza International Ltd.,mirza-international-limited,HIGH
+MKPL,MK Proteins Ltd.,mk-proteins-ltd,HIGH
+MOREPENLAB,Morepen Laboratories Ltd.,morepen-laboratories-limited,HIGH
+MOTHERSON,Samvardhana Motherson International Ltd.,motherson-sumi-systems-limited,HIGH
+MOTHERSUMI,Samvardhana Motherson International Ltd,samvardhana-motherson-international-limited,HIGH
+MOTILALOFS,Motilal Oswal Financial Services Ltd.,motilal-oswal-financial-services-limited,HIGH
+MPHASIS,Mphasis Ltd.,mphasis-limited,HIGH
+MPSLTD,MPS Ltd,mps-limited,HIGH
+MRF,MRF Ltd.,mrf-limited,HIGH
+MRPL,MRPL Ltd.,mangalore-refinery-and-petrochemicals-limited,HIGH
+MTEDUCARE,MT Educare Ltd.,mt-educare-limited,HIGH
+MTNL,MTNL Ltd.,mahanagar-telephone-nigam-limited,HIGH
+MUKTAARTS,Mukta Arts Ltd.,mukta-arts-limited,HIGH
+MUNJALAU,Munjal Auto Industries Ltd.,munjal-auto-industries-limited,HIGH
+MUNJALSHOW,Munjal Showa Ltd.,munjal-showa-limited,HIGH
+NAHARPOLY,Nahar Poly Films Ltd.,nahar-poly-films-limited,HIGH
+NAHARSPING,Nahar Spinning Mills Ltd.,nahar-spinning-mills-limited,HIGH
+NAM-INDIA,Nippon India Mutual Fund (NAM India),reliance-nippon-life-asset-management-limited,HIGH
+NATCOPHARM,Natco Pharma Ltd.,natco-pharma-limited,HIGH
+NATIONALUM,National Aluminium Company Ltd.,national-aluminium-company-limited,HIGH
+NAVA,Nava Ltd,nava-limited,HIGH
+NAVINFLUOR,Navin Fluorine International Ltd.,navin-fluorine-international-limited,HIGH
+NAVKARCORP,Navkar Corporation Ltd.,navkar-corporation-limited,HIGH
+NCC,NCC Ltd.,ncc-limited,HIGH
+NDTV,New Delhi Television Ltd,new-delhi-television-limited,HIGH
+NESCO,Nesco Ltd.,nesco-limited,HIGH
+NESTLEIND,Nestlé India Ltd.,nestle-india-limited,HIGH
+NETWEB,Netweb Technologies India Ltd.,netweb-technologies-india-ltd,HIGH
+NETWORK18,Network18 Media & Investments Ltd.,network18-media-investments-limited,HIGH
+NFL,National Fertilizers Ltd.,national-fertilizers-limited,HIGH
+NH,Narayana Hrudayalaya Ltd.,narayana-hrudayalaya-ltd,HIGH
+NIACL,The New India Assurance Co. Ltd.,the-new-india-assurance-company-limited,HIGH
+NILKAMAL,Nilkamal Ltd.,nilkamal-limited,HIGH
+NITCO,Nitco Ltd.,nitco-limited,HIGH
+NLCINDIA,NLC India Ltd.,nlc-india-limited,HIGH
+NMDC,NMDC Ltd.,nmdc-limited,HIGH
+NOCIL,NOCIL Ltd.,nocil-limited,HIGH
+NOIDATOLL,Noida Toll Bridge Company Ltd,noida-toll-bridge-company-limited,HIGH
+NRBBEARING,NRB Bearing Ltd.,nrb-bearing-limited,HIGH
+NTPC,NTPC Ltd.,ntpc-limited,HIGH
+NUVOCO,Nuvoco Vistas Corporation Ltd.,nuvoco-vistas-corporation-limited,HIGH
+OFSS,Oracle Financial Services Software Ltd.,oracle-financial-services-software-limited,HIGH
+OIL,Oil India Ltd.,oil-india-limited,HIGH
+OILCOUNTUB,Oil Country Tubular Ltd,oil-country-tubular-limited,HIGH
+OLAELEC,Ola Electric Mobility Ltd,ola-electric-mobility-limited,HIGH
+OLECTRA,Olectra Greentech Ltd,olectra-greentech-limited,HIGH
+OMAXAUTO,Omax Autos Ltd,omax-autos-limited,HIGH
+OMAXE,Omaxe Ltd,omaxe-limited,HIGH
+ONELIFECAP,Onelife Capital Advisors Ltd,onelife-capital-advisors-limited,HIGH
+ONGC,Oil & Natural Gas Corporation Ltd.,oil-and-natural-gas-corporation-limited,HIGH
+ONIDA,MIRC Electronics (Onida) Ltd.,mirc-electronics-limited,HIGH
+ORIENTCEM,Orient Cement Ltd.,orient-cement-limited,HIGH
+ORIENTELEC,Orient Electric Ltd.,orient-electric-limited,HIGH
+ORIENTHOT,Oriental Hotels Ltd.,oriental-hotels-limited,HIGH
+ORIENTPPR,Orient Paper & Industries Ltd.,orient-paper-and-industries-limited,HIGH
+ORIENTREF,RHI Magnesita India Ltd,rhi-magnesita-india-limited,HIGH
+ORIENTTECH,Orient Technologies Ltd,orient-technologies-limited,HIGH
+ORISSAMINE,Orissa Minerals Development Company Ltd,orissa-minerals-development-company-limited,HIGH
+OSWALAGRO,Oswal Agro Mills Ltd,oswal-agro-mills-limited,HIGH
+PARAGMILK,Parag Milk Foods Ltd.,parag-milk-foods-limited,HIGH
+PARSVNATH,Parsvnath Developers Ltd,parsvnath-developers-limited,HIGH
+PATANJALI,Patanjali Foods Ltd,patanjali-foods-limited,HIGH
+PATELENG,Patel Engineering Ltd.,patel-engineering-limited,HIGH
+PCBL,PCBL Ltd.,pcbl-limited,HIGH
+PCJEWELLER,PC Jeweller Ltd.,pc-jeweller-limited,HIGH
+PDMJEPAPER,Pudumjee Paper Products Ltd,pudumjee-paper-products-limited,HIGH
+PENIND,Pennar Industries Ltd,pennar-industries-limited,HIGH
+PENINLAND,Peninsula Land Ltd,peninsula-land-limited,HIGH
+PERSISTENT,Persistent Systems Ltd.,persistent-systems-limited,HIGH
+PETRONET,Petronet LNG Ltd.,petronet-lng-limited,HIGH
+PFIZER,Pfizer Ltd.,pfizer-limited,HIGH
+PGHL,Procter & Gamble Health Ltd,procter-and-gamble-health-limited,HIGH
+PIDILITIND,Pidilite Industries Ltd.,pidilite-industries-limited,HIGH
+PNB,Punjab National Bank,punjab-national-bank,HIGH
+PNBGILTS,PNB Gilts Ltd.,pnb-gilts-limited,HIGH
+PNC,Pritish Nandy Communications Ltd,pritish-nandy-communications-limited,HIGH
+POLARIS,Polaris Consulting & Services Ltd,polaris-consulting-and-services-limited,HIGH
+POLYCAB,Polycab India Ltd.,polycab-india-limited,HIGH
+POLYMED,Poly Medicure Ltd,poly-medicure-limited,HIGH
+POLYPLEX,Polyplex Corporation Ltd.,polyplex-corporation-limited,HIGH
+POONAWALLA,Poonawalla Fincorp Ltd.,poonawalla-fincorp-limited,HIGH
+PRAJIND,Praj Industries Ltd.,praj-industries-limited,HIGH
+PRAKASH,Prakash Industries Ltd,prakash-industries-limited,HIGH
+PRECISION,Precision Wires India Ltd,precision-wires-india-limited,HIGH
+PREMIER,Premier Ltd,premier-limited,HIGH
+PREMIERENE,Premier Energies Ltd,premier-energies-limited,HIGH
+PRESTIGE,Prestige Estates Projects Ltd.,prestige-estates-projects-limited,HIGH
+PRUDENT,Prudent Corporate Advisory Services Ltd.,prudent-corporate-advisory-services-ltd,HIGH
+PTC,PTC India Ltd,ptc-india-limited,HIGH
+PUNJABCHEM,Punjab Chemicals & Crop Protection Ltd.,punjab-chemicals-crop-protection-limited,HIGH
+PURVA,Puravankara Ltd.,puravankara-limited,HIGH
+QUESS,Quess Corp Ltd.,quess-corp-limited,HIGH
+RAIN,Rain Industries Ltd.,rain-industries-limited,HIGH
+RAJESHEXPO,Rajesh Exports Ltd,rajesh-exports-limited,HIGH
+RALLIS,Rallis India Ltd.,rallis-india-limited,HIGH
+RAMANEWS,Shree Rama Newsprint Ltd,shree-rama-newsprint-limited,HIGH
+RAMCOCEM,The Ramco Cements Ltd.,the-ramco-cements-limited,HIGH
+RAMCOIND,Ramco Industries Ltd,ramco-industries-limited,HIGH
+RAMCOSYS,Ramco Systems Ltd.,ramco-systems-limited,HIGH
+RATNAMANI,Ratnamani Metals & Tubes Ltd.,ratnamani-metals-tubes-limited,HIGH
+RAYMOND,Raymond Ltd.,raymond-limited,HIGH
+RBLBANK,RBL Bank Ltd.,rbl-bank-limited,HIGH
+RCF,Rashtriya Chemicals & Fertilizers Ltd.,rashtriya-chemicals-and-fertilizers-limited,HIGH
+RCOM,Reliance Communications Ltd,reliance-communications-limited,HIGH
+RECLTD,REC Ltd.,rec-limited,HIGH
+REGENCERAM,Regency Ceramics Ltd,regency-ceramics-limited,HIGH
+RELAXO,Relaxo Footwears Ltd.,relaxo-footwears-limited,HIGH
+RELCAPITAL,Reliance Capital Ltd.,reliance-capital-limited,HIGH
+RELIANCE,Reliance Industries Ltd.,reliance-industries-limited,HIGH
+RELIGARE,Religare Enterprises Ltd.,religare-enterprises-limited,HIGH
+RELINFRA,Reliance Infrastructure Ltd,reliance-infrastructure-limited,HIGH
+REPRO,Repro India Ltd,repro-india-limited,HIGH
+RESPONIND,Responsive Industries Ltd.,responsive-industries-limited,HIGH
+RHIM,RHI Magnesita India Ltd.,rhi-magnesita-india-limited,HIGH
+RICOAUTO,Rico Auto Industries Ltd.,rico-auto-industries-limited,HIGH
+RIIL,Reliance Industrial Infrastructure Ltd.,reliance-industrial-infrastructure-limited,HIGH
+RITES,RITES Ltd.,rites-limited,HIGH
+RKFORGE,Ramkrishna Forgings Ltd.,ramkrishna-forgings-limited,HIGH
+ROSSARI,Rossari Biotech Ltd.,rossari-biotech-ltd,HIGH
+ROUTE,Route Mobile Ltd.,route-mobile-limited,HIGH
+RPOWER,Reliance Power Ltd.,reliance-power-limited,HIGH
+RPPINFRA,RPP Infra Projects Ltd.,rpp-infra-projects-limited,HIGH
+RSWM,RSWM Ltd.,rswm-limited,HIGH
+RTNPOWER,RattanIndia Power Ltd,rattanindia-power-limited,HIGH
+RUPA,Rupa & Company Ltd.,rupa-and-company-limited,HIGH
+RUSHIL,Rushil Decor Ltd.,rushil-decor-limited,HIGH
+RVNL,Rail Vikas Nigam Ltd.,rail-vikas-nigam-limited,HIGH
+SADBHAV,Sadbhav Engineering Ltd.,sadbhav-engineering-limited,HIGH
+SAIL,Steel Authority of India Ltd.,steel-authority-of-india-limited,HIGH
+SAKHTISUG,Sakthi Sugars Ltd,sakthi-sugars-limited,HIGH
+SALSTEEL,S.A.L. Steel Ltd,s-a-l-steel-limited,HIGH
+SAMTEL,Samtel India Ltd,samtel-india-limited,HIGH
+SANOFI,Sanofi India Ltd.,sanofi-india-limited,HIGH
+SAREGAMA,Saregama India Ltd.,saregama-india-limited,HIGH
+SBICARD,SBI Cards And Payment Services Ltd.,sbi-cards-and-payment-services-ltd,HIGH
+SBILIFE,SBI Life Insurance Co. Ltd.,sbi-life-insurance-company-limited,HIGH
+SBIN,State Bank of India,state-bank-of-india,HIGH
+SCHAEFFLER,Schaeffler India Ltd.,schaeffler-india-limited,HIGH
+SCHNEIDER,Schneider Electric Infrastructure Ltd,schneider-electric-infrastructure-limited,HIGH
+SCI,The Shipping Corporation of India Ltd.,the-shipping-corporation-of-india-limited,HIGH
+SCILAL,Shipping Corporation of India Land and Assets Ltd,shipping-corporation-of-india-land-and-assets-limited,HIGH
+SEAMECLTD,Seamec Ltd.,seamec-limited,HIGH
+SECURKLOUD,SecureKloud Technologies Ltd,securekloud-technologies-limited,HIGH
+SEQUENT,Viyash Life Sciences,viyash-life-sciences,HIGH
+SESHAPAPER,Seshasayee Paper & Boards Ltd.,seshasayee-paper-and-boards-limited,HIGH
+SFL,Sheela Foam Ltd.,sheela-foam-limited,HIGH
+SHANKARA,Shankara Building Products Ltd,shankara-building-products-limited,HIGH
+SHARDACROP,Sharda Cropchem Ltd.,sharda-cropchem-limited,HIGH
+SHILPAMED,Shilpa Medicare Ltd.,shilpa-medicare-limited,HIGH
+SHK,S H Kelkar and Company Ltd,s-h-kelkar-and-company-limited,HIGH
+SHOPERSTOP,Shoppers Stop Ltd.,shoppers-stop-limited,HIGH
+SHREECEM,Shree Cement Ltd.,shree-cements-limited,HIGH
+SHREERAMA,Shree Rama Multi-Tech Ltd,shree-rama-multi-tech-limited,HIGH
+SHRENUJ,Shrenuj & Company Ltd,shrenuj-and-company-limited,HIGH
+SHRIRAMFIN,Shriram Finance Ltd.,shriram-finance-limited,HIGH
+SHYAMTEL,Shyam Telecom Ltd,shyam-telecom-limited,HIGH
+SIEMENS,Siemens Ltd.,siemens-limited,HIGH
+SIL,Standard Industries Ltd,standard-industries-limited,HIGH
+SIMPLEXINF,Simplex Infrastructures Ltd,simplex-infrastructures-limited,HIGH
+SIS,SIS Ltd,sis-limited,HIGH
+SITINET,Siti Networks Ltd,siti-networks-limited,HIGH
+SJLOGISTIC,S J Logistics (India) Ltd,s-j-logistics-limited,HIGH
+SJVN,SJVN Ltd.,sjvn-limited,HIGH
+SKFINDIA,SKF India Ltd.,skf-india-limited,HIGH
+SMARTLINK,Smartlink Holdings Ltd,smartlink-holdings-limited,HIGH
+SMLISUZU,SML Mahindra Ltd,sml-mahindra-limited,HIGH
+SMLMAH,SML Isuzu Ltd.,sml-isuzu-limited,HIGH
+SNOWMAN,Snowman Logistics Ltd.,snowman-logistics-limited,HIGH
+SOLARINDS,Solar Industries India Ltd.,solar-industries-india-limited,HIGH
+SOMANYCERA,Somany Ceramics Ltd.,somany-ceramics-limited,HIGH
+SONACOMS,Sona BLW Precision Forgings Ltd.,sona-blw-precision-forgings-limited,HIGH
+SONATSOFTW,Sonata Software Ltd.,sonata-software-limited,HIGH
+SOUTHBANK,The South Indian Bank Ltd.,the-south-indian-bank-limited,HIGH
+SPANDANA,Spandana Sphoorty Financial Ltd.,spandana-sphoorty-financial-limited,HIGH
+SPARC,Sun Pharma Advanced Research Co. Ltd.,sun-pharma-advanced-research-company-limited,HIGH
+SPLPETRO,Supreme Petrochem Ltd,supreme-petrochem-limited,HIGH
+SRF,SRF Ltd.,srf-limited,HIGH
+STAR,Strides Pharma Science Ltd,strides-pharma-science-limited,HIGH
+STARCEMENT,Star Cement Ltd.,star-cement-limited,HIGH
+SULA,Sula Vineyards Ltd,sula-vineyards-limited,HIGH
+SUMICHEM,Sumitomo Chemical India Ltd,sumitomo-chemical-india-limited,HIGH
+SUMMITSEC,Summit Securities Ltd,summit-securities-limited,HIGH
+SUNCLAY,Sundaram-Clayton Ltd,sundaram-clayton-limited,HIGH
+SUNDARMFIN,Sundaram Finance Ltd.,sundaram-finance-limited,HIGH
+SUNDRMBRAK,Sundaram Brake Linings Ltd,sundaram-brake-linings-limited,HIGH
+SUNDRMFAST,Sundram Fasteners Ltd,sundram-fasteners-limited,HIGH
+SUNPHARMA,Sun Pharmaceutical Industries Ltd.,sun-pharmaceuticals-industries-limited,HIGH
+SUPRAJIT,Suprajit Engineering Ltd.,suprajit-engineering-limited,HIGH
+SUPREMEIND,Supreme Industries Ltd.,supreme-industries-limited,HIGH
+SUPREMEINF,Supreme Infrastructure India Ltd,supreme-infrastructure-india-limited,HIGH
+SURYALAXMI,Suryalakshmi Cotton Mills Ltd,suryalakshmi-cotton-mills-limited,HIGH
+SUVEN,Suven Pharmaceuticals Ltd.,suven-pharmaceuticals-limited,HIGH
+SWARAJENG,Swaraj Engines Ltd.,swaraj-engines-limited,HIGH
+SWIGGY,Swiggy Ltd,swiggy-limited,HIGH
+SWSOLAR,Sterling and Wilson Renewable Energy Ltd.,sterling-and-wilson-renewable-energy-limited,HIGH
+SYMPHONY,Symphony Ltd.,symphony-limited,HIGH
+SYNGENE,Syngene International Ltd.,syngene-international-limited,HIGH
+SYRMA,Syrma SGS Technology Ltd.,syrma-sgs-technology-ltd,HIGH
+TAKE,Take Solutions Ltd,take-solutions-limited,HIGH
+TASTYBITE,Tasty Bite Eatables Ltd,tasty-bite-eatables-limited,HIGH
+TATACHEM,Tata Chemicals Ltd.,tata-chemicals-limited,HIGH
+TATACOMM,Tata Communications Ltd.,tata-communications-limited,HIGH
+TATACONSUM,Tata Consumer Products Ltd.,tata-consumer-limited,HIGH
+TATAELXSI,Tata Elxsi Ltd.,tata-elxsi-limited,HIGH
+TATAINVEST,Tata Investment Corporation Ltd.,tata-investment-corporation-limited,HIGH
+TATAMETAL,Tata Steel Ltd. (TATAMETAL renamed),tata-steel-limited,HIGH
+TATAMOTORS,Tata Motors Ltd.,tata-motors-limited,HIGH
+TATAPOWER,Tata Power Company Ltd.,tata-power-company-limited,HIGH
+TATASTEEL,Tata Steel Ltd.,tata-steel-limited,HIGH
+TATVA,Tatva Chintan Pharma Chem Ltd.,tatva-chintan-pharma-chem-limited,HIGH
+TBZ,Tribhovandas Ltd.,tribhovandas-limited,HIGH
+TCI,Transport Corporation of India Ltd.,transport-corporation-of-india-limited,HIGH
+TCIEXP,TCI Express Ltd.,tci-express-limited,HIGH
+TCS,Tata Consultancy Services Ltd.,tata-consultancy-services-limited,HIGH
+TDPOWERSYS,TD Power Systems Ltd,td-power-systems-limited,HIGH
+TEAMLEASE,TeamLease Services Ltd.,teamlease-services-limited,HIGH
+TECH,Tech Mahindra Ltd,tech-mahindra-limited,HIGH
+TECHNOE,Techno Electric & Engineering Co. Ltd.,techno-electric-and-engineering-company-limited,HIGH
+TEXRAIL,Texmaco Rail & Engineering Ltd.,texmaco-rail-and-engineering-limited,HIGH
+THERMAX,Thermax Ltd.,thermax-limited,HIGH
+THOMASCOOK,Thomas Cook (India) Ltd,thomas-cook-limited,HIGH
+THYROCARE,Thyrocare Technologies Ltd.,thyrocare-technologies-limited,HIGH
+TI,Tilaknagar Industries Ltd.,tilaknagar-industries-limited,HIGH
+TIINDIA,Tube Investments of India Ltd.,tube-investments-of-india-limited,HIGH
+TIMETECHNO,Time Technoplast Ltd.,time-technoplast-limited,HIGH
+TIMEX,Timex Group India Ltd,timex-group-india-limited,HIGH
+TIMKEN,Timken India Ltd.,timken-india-limited,HIGH
+TITAN,Titan Company Ltd.,titan-company-limited,HIGH
+TMCV,Tata Motors Commercial Vehicles,tata-motors-commercial-vehicles,HIGH
+TMPV,Tata Motors Ltd. (TMPV),tata-motors-limited,HIGH
+TNPETRO,Tamil Nadu Petroproducts Ltd.,tamil-nadu-petroproducts-limited,HIGH
+TORNTPHARM,Torrent Pharmaceuticals Ltd.,torrent-pharmaceuticals-limited,HIGH
+TORNTPOWER,Torrent Power Ltd.,torrent-power-limited,HIGH
+TRANSPEK,Transpek Industry Ltd.,transpek-industry-limited,HIGH
+TREEHOUSE,Tree House Education & Accessories Ltd,tree-house-education-and-accessories-limited,HIGH
+TRENT,Trent Ltd.,trent-limited,HIGH
+TRIDENT,Trident Ltd.,trident-limited,HIGH
+TRIGYN,Trigyn Technologies Ltd,trigyn-technologies-limited,HIGH
+TRITURBINE,Triveni Turbine Ltd,triveni-turbine-limited,HIGH
+TRIVENI,Triveni Engineering & Industries Ltd.,triveni-engineering-industries-limited,HIGH
+TTKPRESTIG,TTK Prestige Ltd.,ttk-prestige-limited,HIGH
+TTML,Tata Teleservices (Maharashtra) Ltd,tata-teleservices-limited,HIGH
+TVSSRICHAK,TVS Srichakra Ltd.,tvs-srichakra-limited,HIGH
+TVTODAY,TV Today Network Ltd.,tv-today-network-limited,HIGH
+UBL,United Breweries Ltd.,united-breweries-limited,HIGH
+UCAL,UCAL Fuel Systems Ltd.,ucal-fuel-systems-limited,HIGH
+UCALFUEL,UCAL Ltd,ucal-limited,HIGH
+UFLEX,Uflex Ltd.,uflex-limited,HIGH
+UJJIVAN,Ujjivan Small Finance Bank Ltd.,ujjivan-small-finance-bank-limited,HIGH
+UJJIVANSFB,Ujjivan Small Finance Bank Ltd.,ujjivan-small-finance-bank-limited,HIGH
+ULTRACEMCO,UltraTech Cement Ltd.,ultratech-cement-limited,HIGH
+UNICHEMLAB,Unichem Laboratories Ltd.,unichem-laboratories-limited,HIGH
+UNIECOM,Unicommerce eSolutions Ltd,unicommerce-esolutions-limited,HIGH
+UNIONBANK,Union Bank of India,union-bank-of-india,HIGH
+UNITDSPR,United Spirits Ltd.,united-spirits-limited,HIGH
+UNOMINDA,UNO Minda Ltd.,uno-minda-limited,HIGH
+URBANCO,Urban Company,urban-company,HIGH
+USHAMART,Usha Martin Ltd,usha-martin-limited,HIGH
+UTKARSHBNK,Utkarsh Small Finance Bank Ltd,utkarsh-small-finance-bank-limited,HIGH
+UTTAM,Uttam Sugar Mills Ltd.,uttam-sugar-mills-limited,HIGH
+UTTAMSUGAR,Uttam Sugar Mills Ltd.,uttam-sugar-mills-limited,HIGH
+UYFINCORP,U.Y. Fincorp Ltd,u-y-fincorp-limited,HIGH
+VAIBHAVGBL,Vaibhav Global Ltd.,vaibhav-global-limited,HIGH
+VARDMNPOLY,Vardhman Polytex Ltd,vardhman-polytex-limited,HIGH
+VARROC,Varroc Engineering Ltd.,varroc-engineering-limited,HIGH
+VARUN,Varun Beverages Ltd,varun-beverages-limited,HIGH
+VBL,Varun Beverages Ltd.,varun-beverages-limited,HIGH
+VEDL,Vedanta Ltd.,vedanta-limited,HIGH
+VENKEYS,Venky's (India) Ltd.,venkys-india-limited,HIGH
+VESUVIUS,Vesuvius India Ltd.,vesuvius-india-limited,HIGH
+VHL,Vardhman Holdings Ltd,vardhman-holdings-limited,HIGH
+VIJAYA,Vijaya Diagnostic Centre Ltd.,vijaya-diagnostic-centre-limited,HIGH
+VINDHYATEL,Vindhya Telelinks Ltd,vindhya-telelinks-limited,HIGH
+VINYLINDIA,Vinyl Chemicals (India) Ltd.,vinyl-chemicals-india-limited,HIGH
+VIVIDHA,Visagar Polytex Ltd,visagar-polytex-limited,HIGH
+VIYASH,Viyash Life Sciences,viyash-life-sciences,HIGH
+VMART,V-Mart Retail Ltd.,v-mart-retail-limited,HIGH
+VOLTAS,Voltas Ltd.,voltas-limited,HIGH
+VTL,Vardhman Textiles Ltd.,vardhman-textiles-limited,HIGH
+WABAG,VA Tech Wabag Ltd.,va-tech-wabag-limited,HIGH
+WELENT,Welspun Enterprises Ltd,welspun-enterprises-limited,HIGH
+WESTLIFE,Westlife Foodworld Ltd.,westlife-foodworld-limited,HIGH
+WHEELS,Wheels India Ltd.,wheels-india-limited,HIGH
+WIDIA,Kennametal India Ltd,kennametal-india-limited,HIGH
+WINSOME,Winsome Yarns Ltd,winsome-yarns-limited,HIGH
+WIPRO,Wipro Ltd.,wipro-limited,HIGH
+WOCKPHARMA,Wockhardt Ltd.,wockhardt-limited,HIGH
+WONDERLA,Wonderla Holidays Ltd.,wonderla-holidays-limited,HIGH
+WSI,W.S. Industries (India) Ltd,w-s-industries-limited,HIGH
+WSTCSTPAPR,West Coast Paper Mills Ltd.,west-coast-paper-mills-limited,HIGH
+YESBANK,Yes Bank Ltd.,yes-bank-limited,HIGH
+ZEEL,Zee Entertainment Enterprises Ltd.,zee-entertainment-enterprises-limited,HIGH
+ZEELEARN,Zee Learn Ltd,zee-learn-limited,HIGH
+ZENSARTECH,Zensar Technologies Ltd,zensar-technologies-limited,HIGH
+ZTECH,Z-Tech (India) Ltd,z-tech-limited,HIGH
+ZUARI,Zuari Agro Chemicals Ltd,zuari-agro-chemicals-limited,HIGH
+ZYDUSWELL,Zydus Wellness Ltd.,zydus-wellness-limited,HIGH
