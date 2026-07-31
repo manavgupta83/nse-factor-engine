@@ -1,1 +1,0 @@
-# RMW (profitability) factor construction
