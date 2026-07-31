@@ -492,7 +492,7 @@ def compute_long_short_returns(
 
         records.append({
             "date"         : date,
-            "factor_return": long_ret - short_ret,
+            "value_return": long_ret - short_ret,
             "long_return"  : long_ret,
             "short_return" : short_ret,
             "long_count"   : len(long_rets),
@@ -511,7 +511,8 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    r        = df["factor_return"]
+    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
     sharpe   = ann_ret / ann_vol if ann_vol > 0 else 0

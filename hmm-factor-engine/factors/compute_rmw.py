@@ -291,6 +291,7 @@ def compute_long_short_returns(
     score_col  : str,
     monthly_px : pd.DataFrame,
     sym_map    : dict,
+    return_col : str = "factor_return",
 ) -> pd.DataFrame:
     """
     For each month T in scores_df:
@@ -348,7 +349,7 @@ def compute_long_short_returns(
 
         records.append({
             "date"         : date,
-            "factor_return": long_ret - short_ret,
+            return_col: long_ret - short_ret,
             "long_return"  : long_ret,
             "short_return" : short_ret,
             "long_count"   : len(long_rets),
@@ -367,7 +368,9 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    r        = df["factor_return"]
+    # Use first non-date, non-count column as the return column
+    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
     sharpe   = ann_ret / ann_vol if ann_vol > 0 else 0
@@ -492,7 +495,8 @@ def main():
 
     print("  ROE signal ...")
     roe_returns = compute_long_short_returns(
-        results, "score_combined_roe", monthly_px, sym_map
+        results, "score_combined_roe", monthly_px, sym_map,
+        return_col="rmw_roe_return"
     )
     print_return_stats(roe_returns, "RMW_ROE")
     roe_returns.to_parquet(OUTPUT_ROE_RET)
@@ -500,7 +504,8 @@ def main():
 
     print("  op_ROE signal ...")
     op_roe_returns = compute_long_short_returns(
-        results, "score_combined_op_roe", monthly_px, sym_map
+        results, "score_combined_op_roe", monthly_px, sym_map,
+        return_col="rmw_op_roe_return"
     )
     print_return_stats(op_roe_returns, "RMW_OP_ROE")
     op_roe_returns.to_parquet(OUTPUT_OP_ROE_RET)
