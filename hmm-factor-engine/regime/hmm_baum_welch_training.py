@@ -6,7 +6,7 @@ and realised volatility using the Baum-Welch (EM) algorithm.
 
 Input
 -----
-hmm-factor-engine/data/nifty500_hmm_data_200504_202412_v2.parquet
+hmm-factor-engine/data/nifty500_hmm_data.parquet
 
 Training window (construction window — permanently off limits for evaluation)
 -----------------------------------------------------------------------------
@@ -66,7 +66,7 @@ from sklearn.preprocessing import StandardScaler
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATA_FILE   = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/data/nifty500_hmm_data_200504_202412_v2.parquet")
+DATA_FILE   = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/data/nifty500_hmm_data.parquet")
 MODEL_DIR   = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/models")
 MODEL_FILE  = MODEL_DIR / "hmm_3states_200511_201912.pkl"
 PARAMS_FILE = MODEL_DIR / "hmm_3states_200511_201912_params.json"

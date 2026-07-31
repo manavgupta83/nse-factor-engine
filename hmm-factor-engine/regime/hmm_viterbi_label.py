@@ -24,7 +24,7 @@ is relabelled Choppy. Rationale:
 
 Input
 -----
-hmm-factor-engine/data/nifty500_hmm_data_200504_202412_v2.parquet
+hmm-factor-engine/data/nifty500_hmm_data.parquet
 hmm-factor-engine/regime/models/hmm_3states_200511_201912.pkl
 
 Output
@@ -63,7 +63,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DATA_FILE    = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/data/nifty500_hmm_data_200504_202412_v2.parquet")
+DATA_FILE    = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/data/nifty500_hmm_data.parquet")
 MODEL_FILE   = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/models/hmm_3states_200511_201912.pkl")
 LABELS_FILE  = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/models/hmm_viterbi_labels_200511_201912.parquet")
 SUMMARY_FILE = Path("/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/models/hmm_viterbi_labels_200511_201912_summary.json")
