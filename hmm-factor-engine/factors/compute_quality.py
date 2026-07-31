@@ -64,7 +64,12 @@ SECTOR_FILE     = DATA_DIR / "ticker_to_sector.csv"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_history/"
                        "nifty500_2005-01-01_to_2026-06-30.csv")
-OUTPUT_FILE     = FACTORS_DIR / "factor_quality.parquet"
+OUTPUT_FILE      = FACTORS_DIR / "factor_quality.parquet"
+OUTPUT_RET       = FACTORS_DIR / "quality_returns.parquet"
+
+LONG_PCTILE  = 0.90
+SHORT_PCTILE = 0.10
+MIN_STOCKS   = 20
 
 # ---------------------------------------------------------------------------
 # Config
@@ -537,6 +542,96 @@ def run_backtest(
 
 
 # ---------------------------------------------------------------------------
+# Long-short return computation
+# ---------------------------------------------------------------------------
+def compute_long_short_returns(
+    scores_df  : pd.DataFrame,
+    score_col  : str,
+    monthly_px : pd.DataFrame,
+    sym_map    : dict,
+) -> pd.DataFrame:
+    records = []
+    dates   = sorted(scores_df["date"].unique())
+
+    for date in dates:
+        month_df = scores_df[
+            scores_df["date"] == date
+        ][["nse_ticker", score_col]].dropna(subset=[score_col])
+
+        if len(month_df) < MIN_STOCKS:
+            continue
+
+        long_thresh   = month_df[score_col].quantile(LONG_PCTILE)
+        short_thresh  = month_df[score_col].quantile(SHORT_PCTILE)
+        long_tickers  = month_df[month_df[score_col] >= long_thresh]["nse_ticker"].tolist()
+        short_tickers = month_df[month_df[score_col] <= short_thresh]["nse_ticker"].tolist()
+
+        if not long_tickers or not short_tickers:
+            continue
+
+        idx = monthly_px.index
+        if date not in idx:
+            continue
+        pos = idx.get_loc(date)
+        if pos >= len(idx) - 1:
+            continue
+
+        t_end  = idx[pos]
+        t1_end = idx[pos + 1]
+
+        def get_ret(ticker):
+            col = sym_map.get(ticker, ticker)
+            if col not in monthly_px.columns:
+                return np.nan
+            p0 = monthly_px.loc[t_end,  col]
+            p1 = monthly_px.loc[t1_end, col]
+            if pd.notna(p0) and pd.notna(p1) and p0 > 0:
+                return (p1 / p0) - 1
+            return np.nan
+
+        long_rets  = [r for t in long_tickers  if not np.isnan(r := get_ret(t))]
+        short_rets = [r for t in short_tickers if not np.isnan(r := get_ret(t))]
+
+        if not long_rets or not short_rets:
+            continue
+
+        long_ret  = np.mean(long_rets)
+        short_ret = np.mean(short_rets)
+
+        records.append({
+            "date"         : date,
+            "factor_return": long_ret - short_ret,
+            "long_return"  : long_ret,
+            "short_return" : short_ret,
+            "long_count"   : len(long_rets),
+            "short_count"  : len(short_rets),
+            "universe_size": len(month_df),
+        })
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date")
+    return df
+
+
+def print_return_stats(df: pd.DataFrame, name: str):
+    if df.empty:
+        print(f"  {name}: NO RESULTS")
+        return
+    r        = df["factor_return"]
+    ann_ret  = r.mean() * 12
+    ann_vol  = r.std() * np.sqrt(12)
+    sharpe   = ann_ret / ann_vol if ann_vol > 0 else 0
+    cum      = (1 + r).cumprod()
+    drawdown = (cum / cum.cummax() - 1).min()
+    hit_rate = (r > 0).mean()
+    print(f"  {name}: months={len(df)}  ann_ret={ann_ret*100:.2f}%  "
+          f"vol={ann_vol*100:.2f}%  sharpe={sharpe:.3f}  "
+          f"maxDD={drawdown*100:.2f}%  hit={hit_rate*100:.1f}%")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
@@ -639,6 +734,20 @@ def main():
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
+
+    # ---------------------------------------------------------------------------
+    # Compute and save long-short return series
+    # ---------------------------------------------------------------------------
+    print("\nComputing long-short return series ...")
+    monthly_px = daily_prices.resample("ME").last()
+
+    quality_returns = compute_long_short_returns(
+        results, "score_combined", monthly_px, sym_map
+    )
+    print_return_stats(quality_returns, "QUALITY")
+    quality_returns.to_parquet(OUTPUT_RET)
+    print(f"  Saved -> {OUTPUT_RET}")
+
     print("Done.")
 
 
