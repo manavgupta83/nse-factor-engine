@@ -54,6 +54,8 @@ CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_histo
                        "nifty500_2005-01-01_to_2026-06-30.csv")
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 OUTPUT_FILE     = FACTORS_DIR / "bab_returns.parquet"
+SAVE_SIGNALS    = True
+SIGNALS_FILE    = FACTORS_DIR / "factor_bab.parquet"
 
 # ---------------------------------------------------------------------------
 # Config
@@ -230,6 +232,7 @@ def run_backtest(
     idx     = stock_excess.index
 
     records = []
+    signal_records = []
     for i, period in enumerate(periods):
         date = period.to_timestamp(how="end").normalize()
 
@@ -267,6 +270,11 @@ def run_backtest(
         if len(betas) < MIN_STOCKS:
             print(f"  SKIP {period}: only {len(betas)} stocks with valid beta")
             continue
+
+        if SAVE_SIGNALS:
+            pct = 1 - betas.rank(pct=True)  # lower beta = higher percentile
+            for sym, raw in betas.items():
+                signal_records.append({"nse_ticker": sym, "date": date, "signal": float(raw), "percentile": float(pct[sym])})
 
         # Form portfolios
         long_thresh  = betas.quantile(LONG_PCTILE)
@@ -332,7 +340,7 @@ def run_backtest(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date")
-    return df
+    return df, signal_records
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +376,7 @@ def main():
     print(f"  Beta range      : [{MIN_BETA}, {MAX_BETA}]")
     print(f"  Max leverage    : {MAX_LEVERAGE}x")
 
-    results = run_backtest(
+    results, signal_records = run_backtest(
         stock_excess, nifty_excess,
         daily_prices, daily_volume,
         universe_df, sym_map
@@ -408,6 +416,10 @@ def main():
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
+    if SAVE_SIGNALS and signal_records:
+        sig_df = pd.DataFrame(signal_records)
+        sig_df.to_parquet(SIGNALS_FILE, index=False)
+        print(f"Saved signals -> {SIGNALS_FILE}  ({len(sig_df)} rows)")
     print("Done.")
 
 

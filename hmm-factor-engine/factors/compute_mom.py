@@ -52,6 +52,8 @@ CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_histo
                        "nifty500_2005-01-01_to_2026-06-30.csv")
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 OUTPUT_FILE     = FACTORS_DIR / "mom_returns.parquet"
+SAVE_SIGNALS    = True
+SIGNALS_FILE    = FACTORS_DIR / "factor_mom.parquet"
 
 # ---------------------------------------------------------------------------
 # Config
@@ -210,6 +212,7 @@ def run_backtest(
     valid_dates = [d for d in dates if d in monthly_prices.index]
 
     records = []
+    signal_records = []
     for date in valid_dates:
         # Get clean universe with ADTV filter
         universe = get_clean_universe(
@@ -225,6 +228,11 @@ def run_backtest(
         if len(signal) < MIN_STOCKS:
             print(f"  SKIP {date.strftime('%Y-%m')}: only {len(signal)} stocks")
             continue
+
+        if SAVE_SIGNALS:
+            pct = signal.rank(pct=True)
+            for sym, raw in signal.items():
+                signal_records.append({"nse_ticker": sym, "date": date, "signal": float(raw), "percentile": float(pct[sym])})
 
         long_thresh  = signal.quantile(LONG_PCTILE)
         short_thresh = signal.quantile(SHORT_PCTILE)
@@ -265,7 +273,7 @@ def run_backtest(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date")
-    return df
+    return df, signal_records
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +303,7 @@ def main():
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     print(f"  ADTV filter: time-varying (10/20/30cr)")
-    results = run_backtest(
+    results, signal_records = run_backtest(
         monthly_prices, daily_prices, daily_volume, universe_df, sym_map
     )
 
@@ -331,6 +339,10 @@ def main():
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
+    if SAVE_SIGNALS and signal_records:
+        sig_df = pd.DataFrame(signal_records)
+        sig_df.to_parquet(SIGNALS_FILE, index=False)
+        print(f"Saved signals -> {SIGNALS_FILE}  ({len(sig_df)} rows)")
     print("Done.")
 
 

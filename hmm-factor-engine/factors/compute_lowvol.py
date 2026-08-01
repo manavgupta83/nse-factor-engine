@@ -52,6 +52,8 @@ CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_histo
                        "nifty500_2005-01-01_to_2026-06-30.csv")
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 OUTPUT_FILE     = FACTORS_DIR / "lowvol_returns.parquet"
+SAVE_SIGNALS    = True
+SIGNALS_FILE    = FACTORS_DIR / "factor_lowvol.parquet"
 
 # ---------------------------------------------------------------------------
 # Config
@@ -214,6 +216,7 @@ def run_backtest(
     periods = pd.period_range(start=start, end=end, freq="M")
 
     records = []
+    signal_records = []
     for i, period in enumerate(periods):
         month_end = period.to_timestamp(how="end").normalize()
 
@@ -237,6 +240,11 @@ def run_backtest(
         if len(signal) < MIN_STOCKS:
             print(f"  SKIP {period}: only {len(signal)} stocks with signal")
             continue
+
+        if SAVE_SIGNALS:
+            pct = 1 - signal.rank(pct=True)  # lower vol = higher percentile
+            for sym, raw in signal.items():
+                signal_records.append({"nse_ticker": sym, "date": month_end, "signal": float(raw), "percentile": float(pct[sym])})
 
         long_thresh  = signal.quantile(LONG_PCTILE)
         short_thresh = signal.quantile(SHORT_PCTILE)
@@ -278,7 +286,7 @@ def run_backtest(
     if not df.empty:
         df["date"] = pd.to_datetime(df["date"])
         df = df.set_index("date")
-    return df
+    return df, signal_records
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +312,7 @@ def main():
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     print(f"  ADTV filter: time-varying (10/20/30cr)")
-    results = run_backtest(daily_prices, daily_volume, universe_df, sym_map)
+    results, signal_records = run_backtest(daily_prices, daily_volume, universe_df, sym_map)
 
     if results.empty:
         print("ERROR: no results produced")
@@ -339,6 +347,10 @@ def main():
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
+    if SAVE_SIGNALS and signal_records:
+        sig_df = pd.DataFrame(signal_records)
+        sig_df.to_parquet(SIGNALS_FILE, index=False)
+        print(f"Saved signals -> {SIGNALS_FILE}  ({len(sig_df)} rows)")
     print("Done.")
 
 
