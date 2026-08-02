@@ -16,9 +16,9 @@ OUT_PARQUET = BASE_DIR / "regime/weight_matrix.parquet"
 OUT_JSON    = BASE_DIR / "regime/weight_matrix.json"
 
 REGIMES      = ["Bull", "Choppy", "Crisis"]
-FACTORS      = ["mom", "lowvol", "bab", "rmw_roe", "rmw_op_roe", "quality", "value", "size"]
+FACTORS      = ["mom", "bab", "rmw_roe", "value", "size"]
 SHRINKAGE    = 0.5    # blend: 0.5 * sample_mean + 0.5 * zero
-MIN_SHARPE   = 0.0    # exclude factors with regime Sharpe below this
+MIN_SHARPE   = -0.1    # exclude factors with regime Sharpe below this
 
 # ── Load & merge ──────────────────────────────────────────────────────────────
 factors = pd.read_parquet(FACTORS_F)
@@ -167,13 +167,19 @@ for regime in REGIMES:
             print(f"  {w:>10.4f}", end="")
         print(f"  {total:>6.4f}")
 
-# ── Save chosen method (MVO shrinkage as default — most robust) ───────────────
-chosen = "mvo_shrink"
-out = pd.DataFrame(results[chosen]).T
+# ── Save chosen method ───────────────────────────────────────────────────────
+chosen = "sharpe_erc"
+# Mixed method: mvo_shrink for Bull/Choppy, ERC for Crisis
+mixed = {}
+for regime in REGIMES:
+    mixed[regime] = results[chosen][regime]
+results["mixed"] = mixed
+out = pd.DataFrame(results["mixed"]).T
 out.index.name = "regime"
 out.to_parquet(OUT_PARQUET)
 
-all_results = {m: {r: results[m][r] for r in REGIMES} for m in results}
+all_results = {m: {r: results[m][r] for r in REGIMES} for m in results if m != "mixed"}
+all_results["mixed"] = mixed
 with open(OUT_JSON, "w") as fp:
     json.dump({"chosen": chosen, "all_methods": all_results}, fp, indent=2)
 

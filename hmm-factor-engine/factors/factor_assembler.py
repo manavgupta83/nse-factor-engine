@@ -9,14 +9,14 @@ DATA_DIR = os.path.join(BASE_DIR, "factors", "data")
 OUT_FILE = os.path.join(DATA_DIR, "factor_assembler_output.parquet")
 
 FACTORS = [
-    ("mom",        "mom_returns.parquet",        "mom_return"),
-    ("lowvol",     "lowvol_returns.parquet",     "lowvol_return"),
-    ("bab",        "bab_returns.parquet",         "bab_return"),
-    ("rmw_roe",    "rmw_roe_returns.parquet",    "rmw_roe_return"),
-    ("rmw_op_roe", "rmw_op_roe_returns.parquet", "rmw_op_roe_return"),
-    ("quality",    "quality_returns.parquet",    "quality_return"),
-    ("value",      "value_returns.parquet",      "value_return"),
-    ("size",       "size_returns.parquet",       "size_return"),
+    ("mom",        "mom_returns.parquet",        "long_return"),
+    ("lowvol",     "lowvol_returns.parquet",     "long_return"),
+    ("bab",        "bab_returns.parquet",         "long_return"),
+    ("rmw_roe",    "rmw_roe_returns.parquet",    "long_return"),
+    ("rmw_op_roe", "rmw_op_roe_returns.parquet", "long_return"),
+    ("quality",    "quality_returns.parquet",    "long_return"),
+    ("value",      "value_returns.parquet",      "long_return"),
+    ("size",       "size_returns.parquet",       "long_return"),
 ]
 
 IS_SPLITS = {

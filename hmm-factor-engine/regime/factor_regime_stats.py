@@ -11,7 +11,7 @@ FORWARD_F  = os.path.join(BASE_DIR, "regime", "models", "hmm_forward_probs_20200
 OUT_FILE   = os.path.join(BASE_DIR, "regime", "factor_regime_stats.parquet")
 
 REGIMES  = ["Bull", "Choppy", "Crisis"]
-FACTORS  = ["mom", "lowvol", "bab", "rmw_roe", "rmw_op_roe", "quality", "value", "size"]
+FACTORS  = ["mom", "bab", "rmw_roe", "value", "size"]
 
 # ── Load factor returns ───────────────────────────────────────────────────────
 factors = pd.read_parquet(FACTORS_F)
