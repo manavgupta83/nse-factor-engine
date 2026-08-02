@@ -67,29 +67,56 @@ SCORE_DEFINITIONS = {
     },
 
     'C6': {
-        # (rank_ret_12m1m + rank_rs_excess_ret_mkt) with 1.2x multiplier on incumbents
-        # incumbent multiplier applied in engine.py before scoring
+        # (rank_ret_12m1m + rank_alpha_12m1m_ew) with 1.2x multiplier on incumbents
         'type'     : 'average_ranks',
-        'columns'  : ['rank_ret_12m1m', 'rank_rs_excess_ret_mkt'],
-        'ascending': True,
-        'incumbent_multiplier': 1.2,   # applied to composite score of held stocks
-    },
-
-    'C6RSI': {
-        # C6 + RSI as third scoring component
-        # rank_rsi_14: ranked ascending=False within in_universe==True (higher RSI = rank 1)
-        # Same 1.2x incumbent boost as C6
-        'type'     : 'average_ranks',
-        'columns'  : ['rank_ret_12m1m', 'rank_rs_excess_ret_mkt', 'rank_rsi_14'],
+        'columns'  : ['rank_ret_12m1m', 'rank_alpha_12m1m_ew'],
         'ascending': True,
         'incumbent_multiplier': 1.2,
     },
 
-    'C7': {
-        # 0.5 x rank_ret_12m1m + 0.5 x rank_rs_excess_ret_mkt — no hysteresis
+    'C6RSI': {
+        # C6 + RSI as third scoring component
         'type'     : 'average_ranks',
-        'columns'  : ['rank_ret_12m1m', 'rank_rs_excess_ret_mkt'],
+        'columns'  : ['rank_ret_12m1m', 'rank_alpha_12m1m_ew', 'rank_rsi_14'],
         'ascending': True,
+        'incumbent_multiplier': 1.2,
+    },
+
+    'C7_old': {
+        # former C7 — no incumbent boost, kept for reference
+        'type'     : 'average_ranks',
+        'columns'  : ['rank_ret_12m1m', 'rank_alpha_12m1m_ew'],
+        'ascending': True,
+    },
+
+    'C7': {
+        # equal weight: rank_ret_12m1m + rank_ret_6m1m + rank_alpha_12m1m_ew
+        'type'     : 'average_ranks',
+        'columns'  : ['rank_ret_12m1m', 'rank_ret_6m1m', 'rank_alpha_12m1m_ew'],
+        'ascending': True,
+        'incumbent_multiplier': 1.2,
+    },
+
+
+    'C7v2': {
+        # double-weight rank_alpha_12m1m_ew: rank_ret_12m1m + rank_ret_6m1m + 2*rank_alpha_12m1m_ew
+        # alpha component restored to ~50% effective weight
+        'type'     : 'weighted_composite',
+        'components': [
+            ('rank_ret_12m1m',       1, True),
+            ('rank_ret_6m1m',        1, True),
+            ('rank_alpha_12m1m_ew',  2, True),
+        ],
+        'ascending': True,
+        'incumbent_multiplier': 1.2,
+    },
+
+    'C8': {
+        # equal weight: rank_ret_12m1m + rank_ret_6m1m + rank_ret_3m1m + rank_alpha_12m1m_ew
+        'type'     : 'average_ranks',
+        'columns'  : ['rank_ret_12m1m', 'rank_ret_6m1m', 'rank_ret_3m1m', 'rank_alpha_12m1m_ew'],
+        'ascending': True,
+        'incumbent_multiplier': 1.2,
     },
 }
 
@@ -102,5 +129,11 @@ MOMENTUM_RANK_COLS = [
 
 # ── Full grid ─────────────────────────────────────────────────────────────────
 GATE_IDS  = ['G2', 'G3', 'G4', 'G5', 'G6', 'G7']
-SCORE_IDS = ['C1', 'C3', 'C6', 'C6RSI', 'C7']
-CELLS     = [('G2', 'C3'), ('G2', 'C6'), ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7'), ('G5', 'C1'), ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C6RSI'), ('G6', 'C7'), ('G7', 'C6')]
+SCORE_IDS = ['C1', 'C3', 'C6', 'C6RSI', 'C7_old', 'C7', 'C8']
+CELLS     = [
+    ('G2', 'C3'), ('G2', 'C6'),
+    ('G4', 'C3'), ('G4', 'C6'), ('G4', 'C7_old'),
+    ('G5', 'C1'),
+    ('G6', 'C1'), ('G6', 'C6'), ('G6', 'C6RSI'), ('G6', 'C7_old'), ('G6', 'C7'), ('G6', 'C8'),
+    ('G7', 'C6'),
+]

@@ -1,0 +1,120 @@
+{
+  "chosen": "sharpe_erc",
+  "all_methods": {
+    "erc": {
+      "Bull": {
+        "mom": 0.2187,
+        "bab": 0.235,
+        "rmw_roe": 0.2256,
+        "value": 0.1799,
+        "size": 0.1408
+      },
+      "Choppy": {
+        "mom": 0.1955,
+        "bab": 0.2106,
+        "rmw_roe": 0.23,
+        "value": 0.1939,
+        "size": 0.1701
+      },
+      "Crisis": {
+        "mom": 0.2529,
+        "bab": 0.148,
+        "rmw_roe": 0.2347,
+        "value": 0.1758,
+        "size": 0.1887
+      }
+    },
+    "sharpe_erc": {
+      "Bull": {
+        "mom": 0.3215,
+        "bab": 0.2468,
+        "rmw_roe": 0.1893,
+        "value": 0.1644,
+        "size": 0.0781
+      },
+      "Choppy": {
+        "mom": 0.2529,
+        "bab": 0.0,
+        "rmw_roe": 0.3489,
+        "value": 0.2004,
+        "size": 0.1978
+      },
+      "Crisis": {
+        "mom": 0.2182,
+        "bab": 0.1338,
+        "rmw_roe": 0.2846,
+        "value": 0.1222,
+        "size": 0.2412
+      }
+    },
+    "mvo_sample": {
+      "Bull": {
+        "mom": 0.8785,
+        "bab": 0.1215,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 0.0
+      },
+      "Choppy": {
+        "mom": 0.0,
+        "bab": 0.0,
+        "rmw_roe": 1.0,
+        "value": 0.0,
+        "size": 0.0
+      },
+      "Crisis": {
+        "mom": 0.0,
+        "bab": 0.0,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 1.0
+      }
+    },
+    "mvo_shrink": {
+      "Bull": {
+        "mom": 0.8785,
+        "bab": 0.1215,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 0.0
+      },
+      "Choppy": {
+        "mom": 0.0,
+        "bab": 0.0,
+        "rmw_roe": 1.0,
+        "value": 0.0,
+        "size": 0.0
+      },
+      "Crisis": {
+        "mom": 0.0,
+        "bab": 0.0,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 1.0
+      }
+    },
+    "mixed": {
+      "Bull": {
+        "mom": 0.3215,
+        "bab": 0.2468,
+        "rmw_roe": 0.1893,
+        "value": 0.1644,
+        "size": 0.0781
+      },
+      "Choppy": {
+        "mom": 0.2529,
+        "bab": 0.0,
+        "rmw_roe": 0.3489,
+        "value": 0.2004,
+        "size": 0.1978
+      },
+      "Crisis": {
+        "mom": 0.2182,
+        "bab": 0.1338,
+        "rmw_roe": 0.2846,
+        "value": 0.1222,
+        "size": 0.2412
+      }
+    }
+  }
+}

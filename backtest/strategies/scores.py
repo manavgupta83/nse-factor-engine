@@ -87,6 +87,12 @@ def apply_score(
         df['composite_score'] = weighted_sum / total_weight
         df = df[df['composite_score'].notna()]
 
+        if defn.get('incumbent_multiplier') and len(incumbent_symbols) > 0:
+            multiplier = defn['incumbent_multiplier']
+            is_incumbent = df['symbol'].isin(incumbent_symbols)
+            df.loc[is_incumbent, 'composite_score'] = df.loc[is_incumbent, 'composite_score'] / multiplier
+            print(f'  [{score_id}] incumbent multiplier {multiplier}x applied to {is_incumbent.sum()} stocks')
+
     else:
         raise ValueError(f"Unknown score type: {defn['type']}")
 

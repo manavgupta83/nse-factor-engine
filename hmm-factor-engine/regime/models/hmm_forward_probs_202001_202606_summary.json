@@ -1,0 +1,25 @@
+{
+  "eval_window": {
+    "start": "2020-01",
+    "end": "2026-06",
+    "n_months": 78
+  },
+  "initial_state": {
+    "dec2019_label": "Bull",
+    "prior": [
+      0.20552519327457322,
+      3.317484454288389e-36,
+      0.7944748067254268
+    ]
+  },
+  "regime_counts": {
+    "Bull": 48,
+    "Choppy": 26,
+    "Crisis": 4
+  },
+  "regime_pct": {
+    "Bull": 61.54,
+    "Choppy": 33.33,
+    "Crisis": 5.13
+  }
+}

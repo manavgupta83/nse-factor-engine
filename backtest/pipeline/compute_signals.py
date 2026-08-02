@@ -1,4 +1,3 @@
-
 """
 Backtest Pipeline — compute_signals(prices, meta, T)
 
@@ -205,8 +204,6 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
     )
     wide       = rm_win.pivot(index='date', columns='symbol', values='log_ret')
     sym_ind    = meta.set_index('symbol')['industry']
-    # strip .NS for metadata lookup
-    # meta already has .NS suffix — direct lookup
     ind_map    = pd.Series(
         {sym: sym_ind.get(sym, np.nan) for sym in wide.columns}
     )
@@ -274,7 +271,6 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
     ).rename_axis('symbol').reset_index()
 
     # Leading industry
-    # meta has .NS suffix already (universe_metadata_backtest uses .NS symbols)
     li_win = window.copy()
     li_win['log_ret'] = li_win.groupby('symbol')['close'].transform(lambda x: np.log(x / x.shift(1)))
     li_win = li_win.dropna(subset=['log_ret'])
@@ -384,7 +380,7 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
     lot_df['lottery_class'] = np.select(conditions, choices, default='BORING')
 
     # ── Step 5: Stage 5 — ranks ───────────────────────────────────────────────
-    RANK_METRICS = ['ret_12m1m', 'simple_vol_adj_momentum', 'sharpe_style_momentum', 'sortino_style_momentum']
+    RANK_METRICS = ['ret_12m1m', 'ret_6m1m', 'ret_3m1m', 'simple_vol_adj_momentum', 'sharpe_style_momentum', 'sortino_style_momentum']
 
     # assemble full signals before ranking
     out = signals.copy()
@@ -412,8 +408,13 @@ def compute_signals(prices: pd.DataFrame, meta: pd.DataFrame, T: pd.Timestamp) -
             in_univ[metric].rank(method='min', ascending=False).astype('Int64').values
         )
 
-    # rank_rs_excess_ret_mkt — cross-sectional rank within in_universe
+    # rank_rs_excess_ret_mkt — cross-sectional rank within in_universe (kept for backward compat)
     out.loc[out['in_universe'] == True, 'rank_rs_excess_ret_mkt'] = (
+        in_univ['rs_excess_ret_mkt'].rank(method='min', ascending=False).astype('Int64').values
+    )
+
+    # rank_alpha_12m1m_ew — new name for same computation as rank_rs_excess_ret_mkt
+    out.loc[out['in_universe'] == True, 'rank_alpha_12m1m_ew'] = (
         in_univ['rs_excess_ret_mkt'].rank(method='min', ascending=False).astype('Int64').values
     )
 
