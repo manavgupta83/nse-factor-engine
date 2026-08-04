@@ -1,14 +1,32 @@
 """
 fetch_hmm_stock_data_historical.py
 ===================================
-Fetches daily adjusted close prices for all Nifty 500 ever-members.
-Runs once to build the full historical dataset.
-For incremental live updates use fetch_hmm_stock_data_live.py (to be built).
+Master production script for daily stock OHLCV data.
+
+Universe
+--------
+Union of current members from the 4 index symbol CSVs:
+  /home/ec2-user/nse-factor-engine/nifty500_symbols.csv
+  /home/ec2-user/nse-factor-engine/nifty100_symbols.csv
+  /home/ec2-user/nse-factor-engine/niftymidcap150_symbols.csv
+  /home/ec2-user/nse-factor-engine/niftysmallcap250_symbols.csv
+
+Behaviour
+---------
+  - Incremental: fetches only new dates since last saved date
+  - Maintains rolling 30-month window: drops rows older than today - 30 months
+  - Corporate action check: weekly drop >40% + volume spike >40%
+    -> if detected: refetch full price history + shares_outstanding for that symbol
+  - shares_outstanding: fetched only on first run or corporate action detection
+    -> saved to shares_outstanding.parquet as static lookup
+  - New symbols: fetched from WINDOW_START, shares_outstanding fetched too
 
 Output
 ------
-hmm-factor-engine/data/prices_hmm_daily.parquet         <- single canonical file
-hmm-factor-engine/data/prices_hmm_daily_volume.parquet  <- single canonical file
+  hmm-factor-engine/data/prices_hmm_daily.parquet
+    Long format: symbol | date | open | high | low | close | volume
+  hmm-factor-engine/data/shares_outstanding.parquet
+    symbol | shares_outstanding
 
 Usage
 -----
@@ -16,67 +34,88 @@ Usage
 """
 
 import time
-from datetime import date
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import yfinance as yf
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-START_DATE    = "2013-01-01"
-END_DATE      = date.today().strftime("%Y-%m-%d")   # always fetch up to today
-
-BATCH_SIZE    = 50
-SLEEP_BETWEEN = 2
-RETRY_SLEEP   = 5
+BASE             = Path("/home/ec2-user/nse-factor-engine")
+WINDOW_MONTHS    = 30
+BATCH_SIZE       = 20
+SLEEP_BETWEEN    = 2
+RETRY_SLEEP      = 5
 
 WEEKLY_DROP_THRESHOLD  = 0.40
 VOLUME_SPIKE_THRESHOLD = 0.40
 
-CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_history/"
-                       "nifty500_2005-01-01_to_2026-06-30.csv")
+UNIVERSE_FILES = [
+    BASE / "nifty500_symbols.csv",
+    BASE / "nifty100_symbols.csv",
+    BASE / "niftymidcap150_symbols.csv",
+    BASE / "niftysmallcap250_symbols.csv",
+]
 
-OUTPUT_DIR   = Path(__file__).parent
-PRICE_FILE   = OUTPUT_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE  = OUTPUT_DIR / "prices_hmm_daily_volume.parquet"
+OUTPUT_DIR    = Path(__file__).parent
+PRICE_FILE    = OUTPUT_DIR / "prices_hmm_daily.parquet"
+SHARES_FILE   = OUTPUT_DIR / "shares_outstanding.parquet"
+
+TODAY         = date.today()
+END_DATE      = TODAY.strftime("%Y-%m-%d")
+WINDOW_START  = (TODAY - relativedelta(months=WINDOW_MONTHS))
+WINDOW_START_STR = WINDOW_START.strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — Build universe of all ever-members
+# Step 1 — Load universe
 # ---------------------------------------------------------------------------
-def load_all_tickers(csv_path: Path) -> list[str]:
-    print(f"Reading constituent CSV: {csv_path}")
-    df = pd.read_csv(csv_path)
-
-    all_tickers = set()
-    for _, row in df.iterrows():
-        symbols = str(row["symbols"]).strip()
-        if symbols and symbols.lower() != "nan":
-            for t in symbols.split(","):
-                t = t.strip()
-                if t:
-                    all_tickers.add(t)
-
-    for col in ["inclusions", "exclusions"]:
-        if col in df.columns:
-            for val in df[col].dropna():
-                for t in str(val).split(","):
-                    t = t.strip()
-                    if t and t.lower() != "nan":
-                        all_tickers.add(t)
-
-    tickers = sorted(all_tickers)
-    print(f"  Total unique tickers ever in Nifty 500: {len(tickers)}")
+def load_universe() -> list[str]:
+    all_symbols = set()
+    for f in UNIVERSE_FILES:
+        df = pd.read_csv(f)
+        df.columns = df.columns.str.strip().str.lower()
+        syms = df["symbol"].dropna().str.strip().tolist()
+        all_symbols.update(syms)
+        print(f"  {f.name}: {len(syms)} symbols")
+    tickers = sorted(all_symbols)
+    print(f"  Total unique symbols: {len(tickers)}")
     return tickers
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — Fetch in batches
+# Step 2 — Load existing data
 # ---------------------------------------------------------------------------
-def fetch_batch(tickers_ns: list[str], start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def load_existing_prices() -> pd.DataFrame:
+    if PRICE_FILE.exists():
+        df = pd.read_parquet(PRICE_FILE)
+        df.columns = df.columns.str.strip().str.lower()
+        df["date"] = pd.to_datetime(df["date"])
+        print(f"  Existing prices: {df.shape[0]} rows, "
+              f"{df['symbol'].nunique()} symbols, "
+              f"{df['date'].min().date()} -> {df['date'].max().date()}")
+        return df
+    print("  No existing prices found — full fetch for all symbols")
+    return pd.DataFrame()
+
+
+def load_existing_shares() -> pd.DataFrame:
+    if SHARES_FILE.exists():
+        df = pd.read_parquet(SHARES_FILE)
+        df.columns = df.columns.str.strip().str.lower()
+        print(f"  Existing shares_outstanding: {len(df)} symbols")
+        return df
+    print("  No existing shares_outstanding found")
+    return pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Fetch OHLCV in batches, return long format
+# ---------------------------------------------------------------------------
+def fetch_ohlcv(tickers_ns: list[str], start: str, end: str) -> pd.DataFrame:
     raw = yf.download(
         tickers_ns,
         start=start,
@@ -87,153 +126,281 @@ def fetch_batch(tickers_ns: list[str], start: str, end: str) -> tuple[pd.DataFra
     )
 
     if raw.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
     if isinstance(raw.columns, pd.MultiIndex):
-        close  = raw["Close"].copy()
-        volume = raw["Volume"].copy()
+        raw.columns.names = ["field", "ticker"]
+        df = raw.stack(level="ticker", future_stack=True).reset_index()
+        df.columns = df.columns.str.strip().str.lower()
+        df = df.rename(columns={"ticker": "symbol"})
     else:
-        close  = raw[["Close"]].rename(columns={"Close": tickers_ns[0]})
-        volume = raw[["Volume"]].rename(columns={"Volume": tickers_ns[0]})
+        df = raw.reset_index()
+        df.columns = df.columns.str.strip().str.lower()
+        df["symbol"] = tickers_ns[0].replace(".NS", "")
 
-    close.columns  = [c.replace(".NS", "") for c in close.columns]
-    volume.columns = [c.replace(".NS", "") for c in volume.columns]
-    close.index    = pd.to_datetime(close.index)
-    volume.index   = pd.to_datetime(volume.index)
+    df["symbol"] = df["symbol"].str.replace(".NS", "", regex=False)
+    df["date"]   = pd.to_datetime(df["date"])
 
-    return close, volume
+    cols = ["symbol", "date", "open", "high", "low", "close", "volume"]
+    df   = df[[c for c in cols if c in df.columns]]
+    df   = df.dropna(subset=["close"])
+    df   = df[df["volume"] > 0]
+
+    return df
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Corporate action quality check
+# Step 4 — Corporate action check (per symbol, on wide close+volume)
 # ---------------------------------------------------------------------------
-def find_bad_tickers(close: pd.DataFrame, volume: pd.DataFrame) -> list[str]:
-    bad = []
-    for ticker in close.columns:
-        c = close[ticker].dropna()
-        v = volume[ticker].dropna() if ticker in volume.columns else pd.Series(dtype=float)
+def detect_corporate_actions(prices: pd.DataFrame) -> list[str]:
+    """
+    Returns list of symbols with suspected corporate action:
+    weekly return < -40% AND volume spike > 40% in same window.
+    """
+    flagged = []
 
-        if len(c) < 10:
+    for sym, grp in prices.groupby("symbol"):
+        grp = grp.sort_values("date").set_index("date")
+
+        if len(grp) < 10:
             continue
 
-        weekly_ret = c.pct_change(5)
+        weekly_ret = grp["close"].pct_change(5)
 
-        if len(v) >= 10:
-            vol_ratio = v.rolling(5).sum() / v.rolling(5).sum().shift(5) - 1
-        else:
-            vol_ratio = pd.Series(0, index=weekly_ret.index)
+        vol_roll     = grp["volume"].rolling(5).sum()
+        vol_roll_lag = vol_roll.shift(5)
+        vol_ratio    = (vol_roll / vol_roll_lag) - 1
 
         flag = (weekly_ret < -WEEKLY_DROP_THRESHOLD) & (vol_ratio > VOLUME_SPIKE_THRESHOLD)
+
         if flag.any():
             n_flags   = flag.sum()
             worst_ret = weekly_ret[flag].min()
-            bad.append(ticker)
-            print(f"  FLAG: {ticker} — {n_flags} week(s) with drop+spike "
-                  f"(worst weekly ret: {worst_ret:.1%})")
+            flagged.append(sym)
+            print(f"  CORP ACTION FLAG: {sym} — {n_flags} week(s), "
+                  f"worst weekly ret: {worst_ret:.1%}")
 
-    return bad
+    return flagged
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Re-fetch flagged tickers individually
+# Step 5 — Fetch shares_outstanding for a list of symbols
 # ---------------------------------------------------------------------------
-def refetch_solo(tickers: list[str], start: str, end: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    close_parts, volume_parts = [], []
-
-    for ticker in tickers:
-        print(f"  Re-fetching solo: {ticker}")
-        time.sleep(RETRY_SLEEP)
-        c, v = fetch_batch([f"{ticker}.NS"], start, end)
-        if not c.empty:
-            close_parts.append(c)
-            volume_parts.append(v)
-
-    if close_parts:
-        return pd.concat(close_parts, axis=1), pd.concat(volume_parts, axis=1)
-    return pd.DataFrame(), pd.DataFrame()
+def fetch_shares_outstanding(symbols: list[str]) -> pd.DataFrame:
+    rows = []
+    for sym in symbols:
+        try:
+            info   = yf.Ticker(f"{sym}.NS").info
+            shares = info.get("sharesOutstanding")
+            rows.append({"symbol": sym, "shares_outstanding": shares})
+            status = f"{shares:,.0f}" if shares else "N/A"
+            print(f"  {sym}: {status}")
+        except Exception as e:
+            rows.append({"symbol": sym, "shares_outstanding": None})
+            print(f"  {sym}: ERROR — {e}")
+        time.sleep(0.3)
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    print("=" * 60)
+    print("HMM Stock Data Fetch — Production")
+    print(f"Run date      : {END_DATE}")
+    print(f"Window start  : {WINDOW_START_STR}  ({WINDOW_MONTHS} months)")
+    print("=" * 60)
 
-    tickers    = load_all_tickers(CONSTITUENT_CSV)
+    # ── Load universe ────────────────────────────────────────────
+    print("\n[1/6] Loading universe...")
+    tickers    = load_universe()
     tickers_ns = [f"{t}.NS" for t in tickers]
     total      = len(tickers_ns)
 
-    print(f"\nFetching {total} tickers in batches of {BATCH_SIZE} ...")
-    print(f"Date range: {START_DATE} to {END_DATE}\n")
+    # ── Load existing data ───────────────────────────────────────
+    print("\n[2/6] Loading existing data...")
+    existing_prices = load_existing_prices()
+    existing_shares = load_existing_shares()
 
-    all_close, all_volume, failed = [], [], []
+    # ── Determine fetch start and new symbols ────────────────────
+    print("\n[3/6] Determining fetch window and new symbols...")
 
-    for i in range(0, total, BATCH_SIZE):
-        batch      = tickers_ns[i : i + BATCH_SIZE]
-        batch_num  = i // BATCH_SIZE + 1
-        total_batches = (total + BATCH_SIZE - 1) // BATCH_SIZE
-        print(f"Batch {batch_num}/{total_batches}: {len(batch)} tickers "
-              f"({batch[0]} ... {batch[-1]})")
-
-        c, v = fetch_batch(batch, START_DATE, END_DATE)
-
-        if c.empty:
-            print(f"  WARNING: batch {batch_num} returned empty — will retry individually")
-            failed.extend([t.replace(".NS", "") for t in batch])
-        else:
-            n_ok    = c.notna().any().sum()
-            n_empty = c.isna().all().sum()
-            print(f"  OK: {n_ok} tickers with data, {n_empty} empty")
-            all_close.append(c)
-            all_volume.append(v)
-
-        time.sleep(SLEEP_BETWEEN)
-
-    if failed:
-        print(f"\nRetrying {len(failed)} tickers individually ...")
-        c, v = refetch_solo(failed, START_DATE, END_DATE)
-        if not c.empty:
-            all_close.append(c)
-            all_volume.append(v)
-
-    print("\nCombining all batches ...")
-    close  = pd.concat(all_close,  axis=1)
-    volume = pd.concat(all_volume, axis=1)
-
-    close  = close.loc[:,  ~close.columns.duplicated()]
-    volume = volume.loc[:, ~volume.columns.duplicated()]
-
-    close.index.name  = "date"
-    volume.index.name = "date"
-
-    print(f"  Combined shape : {close.shape}")
-    print(f"  Date range     : {close.index[0].date()} -> {close.index[-1].date()}")
-
-    print("\nRunning corporate action quality check ...")
-    bad_tickers = find_bad_tickers(close, volume)
-
-    if bad_tickers:
-        print(f"\n{len(bad_tickers)} ticker(s) flagged — re-fetching solo ...")
-        c_fixed, v_fixed = refetch_solo(bad_tickers, START_DATE, END_DATE)
-        if not c_fixed.empty:
-            for t in c_fixed.columns:
-                close[t]  = c_fixed[t]
-                volume[t] = v_fixed[t] if t in v_fixed.columns else volume[t]
+    if not existing_prices.empty:
+        last_date   = existing_prices["date"].max().date()
+        fetch_start = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
+        existing_syms = set(existing_prices["symbol"].unique())
+        new_syms      = [t for t in tickers if t not in existing_syms]
+        print(f"  Last date in parquet : {last_date}")
+        print(f"  Incremental fetch from: {fetch_start}")
+        print(f"  New symbols not in parquet: {len(new_syms)}")
     else:
-        print("  No corporate action artifacts detected.")
+        fetch_start = WINDOW_START_STR
+        new_syms    = tickers
+        print(f"  Full fetch from: {fetch_start}")
 
-    print(f"\n--- Final Summary ---")
-    print(f"  Shape        : {close.shape}")
-    print(f"  Date range   : {close.index[0].date()} -> {close.index[-1].date()}")
-    print(f"  Tickers      : {close.shape[1]}")
-    print(f"  Avg coverage : {close.notna().mean().mean()*100:.1f}%")
+    if fetch_start >= END_DATE and not new_syms:
+        print("  Already up to date. Nothing to fetch.")
+    else:
+        # ── Fetch incremental prices for all symbols ─────────────
+        print(f"\n[4/6] Fetching prices ({fetch_start} -> {END_DATE})...")
+        all_parts = []
+        failed    = []
 
-    print(f"\nSaving ...")
-    close.to_parquet(PRICE_FILE)
-    volume.to_parquet(VOLUME_FILE)
-    print(f"  Prices -> {PRICE_FILE}")
-    print(f"  Volume -> {VOLUME_FILE}")
+        # Full history fetch for new symbols
+        if new_syms:
+            print(f"  Fetching full history for {len(new_syms)} new symbols...")
+            new_ns = [f"{s}.NS" for s in new_syms]
+            for i in range(0, len(new_ns), BATCH_SIZE):
+                batch     = new_ns[i : i + BATCH_SIZE]
+                batch_num = i // BATCH_SIZE + 1
+                total_b   = (len(new_ns) + BATCH_SIZE - 1) // BATCH_SIZE
+                print(f"  New symbols batch {batch_num}/{total_b}: {len(batch)} tickers")
+                df = fetch_ohlcv(batch, WINDOW_START_STR, END_DATE)
+                if df.empty:
+                    failed.extend([t.replace(".NS", "") for t in batch])
+                else:
+                    print(f"    OK: {df['symbol'].nunique()} tickers, {len(df)} rows")
+                    all_parts.append(df)
+                time.sleep(SLEEP_BETWEEN)
+
+        # Incremental fetch for existing symbols
+        if fetch_start < END_DATE:
+            existing_ns = [f"{t}.NS" for t in tickers if t not in new_syms]
+            for i in range(0, len(existing_ns), BATCH_SIZE):
+                batch     = existing_ns[i : i + BATCH_SIZE]
+                batch_num = i // BATCH_SIZE + 1
+                total_b   = (len(existing_ns) + BATCH_SIZE - 1) // BATCH_SIZE
+                print(f"  Incremental batch {batch_num}/{total_b}: {len(batch)} tickers")
+                df = fetch_ohlcv(batch, fetch_start, END_DATE)
+                if df.empty:
+                    failed.extend([t.replace(".NS", "") for t in batch])
+                else:
+                    print(f"    OK: {df['symbol'].nunique()} tickers, {len(df)} rows")
+                    all_parts.append(df)
+                time.sleep(SLEEP_BETWEEN)
+
+        # Retry failed
+        if failed:
+            print(f"\n  Retrying {len(failed)} failed tickers solo...")
+            for sym in failed:
+                print(f"    {sym}...")
+                time.sleep(RETRY_SLEEP)
+                start = WINDOW_START_STR if sym in new_syms else fetch_start
+                df = fetch_ohlcv([f"{sym}.NS"], start, END_DATE)
+                if not df.empty:
+                    all_parts.append(df)
+                    print(f"    OK")
+                else:
+                    print(f"    STILL EMPTY — skipping {sym}")
+
+        # ── Combine and merge ────────────────────────────────────
+        print("\n[5/6] Corporate action check + merge...")
+        if all_parts:
+            new_data = pd.concat(all_parts, ignore_index=True)
+
+            if not existing_prices.empty:
+                combined = pd.concat([existing_prices, new_data], ignore_index=True)
+                combined = combined.drop_duplicates(subset=["symbol", "date"], keep="last")
+            else:
+                combined = new_data
+
+            combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
+
+            # Corporate action detection on full combined dataset
+            print("  Running corporate action check...")
+            flagged = detect_corporate_actions(combined)
+
+            if flagged:
+                print(f"  {len(flagged)} symbol(s) flagged — refetching full history...")
+                refetch_parts = []
+                for sym in flagged:
+                    time.sleep(RETRY_SLEEP)
+                    df = fetch_ohlcv([f"{sym}.NS"], WINDOW_START_STR, END_DATE)
+                    if not df.empty:
+                        refetch_parts.append(df)
+                        print(f"    {sym}: refetched {len(df)} rows")
+
+                if refetch_parts:
+                    refetch_data = pd.concat(refetch_parts, ignore_index=True)
+                    # Remove old data for flagged symbols and replace
+                    combined = combined[~combined["symbol"].isin(flagged)]
+                    combined = pd.concat([combined, refetch_data], ignore_index=True)
+                    combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
+
+                # Second check after refetch — if still flagged, yfinance didnt fix it
+                print("  Re-checking corporate actions after refetch...")
+                still_flagged = detect_corporate_actions(
+                    combined[combined["symbol"].isin(flagged)]
+                )
+                if still_flagged:
+                    print(f"  {len(still_flagged)} symbol(s) still flagged after refetch — dropping permanently:")
+                    print(f"  {still_flagged}")
+                    # Save to corporate_action_flags.parquet
+                    import pandas as _pd
+                    flags_file = OUTPUT_DIR / "corporate_action_flags.parquet"
+                    new_flags = _pd.DataFrame({"symbol": still_flagged, "reason": "yfinance_unadjusted"})
+                    if _pd.io.common.file_exists(flags_file):
+                        existing_flags = _pd.read_parquet(flags_file)
+                        new_flags = _pd.concat([existing_flags, new_flags]).drop_duplicates(subset=["symbol"], keep="last")
+                    new_flags.to_parquet(flags_file, index=False)
+                    print(f"  Saved -> corporate_action_flags.parquet")
+                    # Drop from combined
+                    combined = combined[~combined["symbol"].isin(still_flagged)]
+                    flagged  = [s for s in flagged if s not in still_flagged]
+                else:
+                    print("  All refetched symbols look clean.")
+
+                # Refetch shares_outstanding for remaining flagged symbols
+                if flagged:
+                    print(f"  Refetching shares_outstanding for {len(flagged)} flagged symbols...")
+                    new_shares = fetch_shares_outstanding(flagged)
+                    if not existing_shares.empty:
+                        existing_shares = existing_shares[~existing_shares["symbol"].isin(flagged)]
+                        existing_shares = pd.concat([existing_shares, new_shares], ignore_index=True)
+                    else:
+                        existing_shares = new_shares
+            else:
+                print("  No corporate action artifacts detected.")
+
+            # Drop rows outside rolling 30-month window
+            cutoff = pd.Timestamp(WINDOW_START)
+            before = len(combined)
+            combined = combined[combined["date"] >= cutoff]
+            dropped  = before - len(combined)
+            if dropped > 0:
+                print(f"  Dropped {dropped} rows older than {WINDOW_START_STR} (30-month window)")
+
+            # Save prices
+            combined.to_parquet(PRICE_FILE, index=False)
+            print(f"  Saved prices: {combined.shape} -> {PRICE_FILE.name}")
+            print(f"  Date range  : {combined['date'].min().date()} -> {combined['date'].max().date()}")
+            print(f"  Symbols     : {combined['symbol'].nunique()}")
+
+        else:
+            print("  No new price data fetched.")
+
+    # ── Shares outstanding — fetch for missing symbols ───────────
+    print("\n[6/6] Shares outstanding...")
+    known_syms   = set(existing_shares["symbol"].tolist()) if not existing_shares.empty else set()
+    missing_syms = [t for t in tickers if t not in known_syms]
+
+    if missing_syms:
+        print(f"  Fetching shares_outstanding for {len(missing_syms)} symbols...")
+        new_shares_df = fetch_shares_outstanding(missing_syms)
+        if not existing_shares.empty:
+            existing_shares = pd.concat([existing_shares, new_shares_df], ignore_index=True)
+        else:
+            existing_shares = new_shares_df
+        existing_shares = existing_shares.drop_duplicates(subset=["symbol"], keep="last")
+        existing_shares.to_parquet(SHARES_FILE, index=False)
+        print(f"  Saved shares_outstanding: {len(existing_shares)} symbols -> {SHARES_FILE.name}")
+    else:
+        print("  All symbols already have shares_outstanding. No fetch needed.")
+
+    print("\n" + "=" * 60)
     print("Done.")
+    print("=" * 60)
 
 
 if __name__ == "__main__":

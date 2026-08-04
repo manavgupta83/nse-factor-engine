@@ -98,7 +98,9 @@ print("=" * 60)
 print("\n[0/5] Loading symbol list...")
 if not SYMBOLS_CSV.exists():
     raise FileNotFoundError("Symbol list not found at {}".format(SYMBOLS_CSV))
-SYMBOLS = pd.read_csv(SYMBOLS_CSV)["symbol"].tolist()
+df_sym = pd.read_csv(SYMBOLS_CSV)
+df_sym.columns = df_sym.columns.str.strip().str.lower()
+SYMBOLS = df_sym["symbol"].tolist()
 print("      {} symbols loaded from {}".format(len(SYMBOLS), SYMBOLS_CSV))
 
 # ── Step 0b: Check last run date ──────────────────
