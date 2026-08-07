@@ -24,6 +24,7 @@ import numpy as np
 import json
 import sys
 import os
+from pathlib import Path
 
 OUT_DIR  = "/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/data"
 CAL_PATH = f"{OUT_DIR}/calibration.json"
@@ -444,6 +445,29 @@ def build_overall_story(tiers, readings):
 # 4. FORMATTING + ORCHESTRATION
 # ─────────────────────────────────────────────
 
+def save_narrative_json(univ, actual_date, overall, tiers, readings):
+    """Save narrative output as JSON for downstream ingestion."""
+    payload = {
+        "universe": univ,
+        "date":     str(actual_date.date()),
+        "overall":  overall,
+        "measures": {
+            measure: {
+                "tier":    tiers.get(measure, "unavailable"),
+                "reading": readings.get(measure, ""),
+            }
+            for measure in [
+                "rv", "avg_corr", "vov", "dispersion", "drawdown", "skew",
+                "amihud", "cs_spread", "turnover"
+            ]
+        }
+    }
+    out_path = Path(OUT_DIR) / f"narrative_{univ}_{actual_date.date()}.json"
+    with open(out_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return out_path
+
+
 def fmt_row(measure, tier, reading):
     label    = MEASURE_LABELS.get(measure, measure)
     tier_str = f"[{tier.upper()}]"
@@ -517,6 +541,8 @@ def generate_narrative(univ, query_date, cal, df):
             readings[measure] = f"{reading}. {trend_sent}" if trend_sent else reading
 
     overall = build_overall_story(tiers, readings)
+
+    save_narrative_json(univ, actual_date, overall, tiers, readings)
 
     lines = [
         f"{'='*80}",
