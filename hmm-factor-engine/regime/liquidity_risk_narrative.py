@@ -587,6 +587,7 @@ def main():
     with open(CAL_PATH) as f:
         cal_all = json.load(f)
 
+    # Hardcoded dates for explicit validation runs only
     STRESS_DATES = [
         "2024-06-04",
         "2024-08-06",
@@ -597,11 +598,17 @@ def main():
     ]
 
     if len(sys.argv) == 3:
+        # python3 liquidity_risk_narrative.py nifty100 2026-04-01
         target_univs = [sys.argv[1]]
         target_dates = [sys.argv[2]]
-    else:
+    elif len(sys.argv) == 2 and sys.argv[1] == "--validate":
+        # python3 liquidity_risk_narrative.py --validate
         target_univs = UNIVERSES
         target_dates = STRESS_DATES
+    else:
+        # default: latest available date across all universes
+        target_univs = UNIVERSES
+        target_dates = None  # resolved per universe below
 
     for univ in target_univs:
         if univ not in cal_all:
@@ -609,7 +616,8 @@ def main():
             continue
         cal = cal_all[univ]
         df  = pd.read_parquet(f"{OUT_DIR}/liquidity_risk_{univ}.parquet")
-        for d in target_dates:
+        dates = target_dates if target_dates else [str(df.index.max().date())]
+        for d in dates:
             narrative = generate_narrative(univ, d, cal, df)
             print(narrative)
 
