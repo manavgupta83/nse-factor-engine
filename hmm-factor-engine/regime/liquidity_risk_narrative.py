@@ -1,9 +1,29 @@
+# liquidity_risk_narrative.py
+#
+# STRUCTURE:
+# 1. Tier functions per measure     (tier_rv ... tier_skew)
+#    Each returns (tier_label, one_line_reading) for today's snapshot value.
+#
+# 2. Trend helpers                  (TIER_ORDER, get_tier, fmt_val, get_trend_sentence)
+#    get_tier   — unified tier lookup used for lookback dates (label only, no reading)
+#    fmt_val    — display formatter per measure
+#    get_trend_sentence — builds the trend sentence appended to each reading
+#
+# 3. Severity + overall story       (SEVERITY, build_overall_story)
+#    SEVERITY   — maps tier labels to stress scores for overall characterisation
+#    TIER_ORDER — maps tier labels to ordinal rank for trend direction logic
+#    Both cover the same tier labels but serve different purposes; kept separate.
+#
+# 4. Formatting + orchestration     (fmt_row, generate_narrative)
+#    generate_narrative — computes lookbacks, calls tier fns, appends trend, builds output
+#
+# 5. Entry point                    (main)
+
 import pandas as pd
 import numpy as np
 import json
 import sys
 import os
-from datetime import date
 
 OUT_DIR  = "/home/ec2-user/nse-factor-engine/hmm-factor-engine/regime/data"
 CAL_PATH = f"{OUT_DIR}/calibration.json"
@@ -24,7 +44,7 @@ MEASURE_LABELS = {
 
 
 # ─────────────────────────────────────────────
-# TIER FUNCTIONS
+# 1. TIER FUNCTIONS
 # Each returns (tier_label, one_line_reading)
 # ─────────────────────────────────────────────
 
@@ -45,13 +65,13 @@ def tier_avg_corr(val, cal):
     p25, p75, p90 = cal["p25"], cal["p75"], cal["p90"]
     pct = round(val * 100, 1)
     if val < p25:
-        return "calm",     f"Avg stock-index correlation {pct}% — stocks moving independently, macro calm"
+        return "calm",     f"Avg stock-index correlation {pct}% — stocks moving independently, low macro influence"
     elif val < p75:
-        return "moderate", f"Avg stock-index correlation {pct}% — normal co-movement"
+        return "moderate", f"Avg stock-index correlation {pct}% — moderate co-movement, some macro influence"
     elif val < p90:
-        return "elevated", f"Avg stock-index correlation {pct}% — macro-driven, herding beginning"
+        return "elevated", f"Avg stock-index correlation {pct}% — macro influence rising, stocks increasingly correlated"
     else:
-        return "extreme",  f"Avg stock-index correlation {pct}% — panic-driven herding, macro dominates"
+        return "extreme",  f"Avg stock-index correlation {pct}% — high macro dominance, stocks moving in lockstep"
 
 
 def tier_vov(val, cal):
@@ -150,110 +170,25 @@ def tier_skew(val, cal):
         return "extreme crash memory", f"Skew {rounded} — strongly negative, extreme crash-like distribution (lags stress by ~60 days)"
 
 
-
 # ─────────────────────────────────────────────
-# TREND HELPERS
+# 2. TREND HELPERS
 # ─────────────────────────────────────────────
 
+# Ordinal rank of each tier — used for trend direction logic only.
+# Higher = more stress. See SEVERITY below for overall story scoring.
 TIER_ORDER = {
     "calm": 0, "moderate": 1, "elevated": 2, "extreme": 3,
     "liquid": 0, "normal": 1, "illiquid": 2, "severely illiquid": 3,
     "compressed": 2, "wide": 2, "spike": 3,
     "low": 1, "surge": 2,
-    "shallow": 0, "deep": 2, "severe": 3,
+    "shallow": 0, "moderate": 1, "deep": 2, "severe": 3,
     "rally-like": 0, "neutral": 1, "crash-like": 2, "extreme crash memory": 3,
     "unavailable": -1,
 }
 
-def nearest_prior(df_index, target):
-    candidates = df_index[df_index <= target]
-    return candidates[-1] if len(candidates) > 0 else None
-
-def get_trend_sentence(measure, today_tier, today_val, lookbacks, cal):
-    """
-    lookbacks: dict of period -> {val, tier, date}
-    periods: 1W, 1M, 3M
-    Returns a trend sentence to append to the reading.
-    """
-    from liquidity_risk_narrative import get_tier, fmt_val
-
-    available = {p: v for p, v in lookbacks.items() if v["tier"] != "unavailable"}
-    if not available:
-        return ""
-
-    # Build ordered sequence: 3M -> 1M -> 1W -> today
-    ordered_periods = [p for p in ["3M", "1M", "1W"] if p in available]
-    ordered_tiers   = [TIER_ORDER.get(available[p]["tier"], 1) for p in ordered_periods]
-    today_score     = TIER_ORDER.get(today_tier, 1)
-    full_sequence   = ordered_tiers + [today_score]
-
-    # Check if sequence is monotonically increasing, decreasing, or mixed
-    diffs_seq = [full_sequence[i+1] - full_sequence[i] for i in range(len(full_sequence)-1)]
-    all_up    = all(d >= 0 for d in diffs_seq) and any(d > 0 for d in diffs_seq)
-    all_down  = all(d <= 0 for d in diffs_seq) and any(d < 0 for d in diffs_seq)
-    all_flat  = all(d == 0 for d in diffs_seq)
-
-    if all_flat:
-        return "Stable across all lookback windows."
-    elif all_up:
-        overall = "Deteriorating over"
-        closing = "stress has been building consistently"
-    elif all_down:
-        overall = "Improving over"
-        closing = "conditions have been improving consistently"
-    else:
-        # Mixed but check net direction
-        net = today_score - ordered_tiers[0]
-        if net > 0:
-            overall = "Net deteriorating over"
-            closing = "overall stress higher than 3 months ago despite uneven path"
-        elif net < 0:
-            overall = "Net improving over"
-            closing = "overall conditions better than 3 months ago despite uneven path"
-        else:
-            overall = "Mixed trend over"
-            closing = "trend is uneven, no clear directional momentum"
-
-    # How many windows available
-    n = len(available)
-    if n == 3:
-        window = "3 months"
-    elif n == 2:
-        window = "available windows"
-    else:
-        window = "available window"
-
-    # Build lookback clauses — 3M first, then 1M, then 1W
-    clauses = []
-    period_labels = {"3M": "three months ago", "1M": "a month ago", "1W": "last week"}
-    for period in ["3M", "1M", "1W"]:
-        if period not in available:
-            continue
-        lb = lookbacks[period]
-        fv = fmt_val(measure, lb["val"])
-        clauses.append(f"{lb['tier']} at {fv} {period_labels[period]}")
-
-    clause_str = ", ".join(clauses)
-    return f"{overall} {window}: was {clause_str} — {closing}."
-
-def fmt_val(measure, val):
-    if pd.isna(val):
-        return "N/A"
-    if measure == "amihud":
-        return f"{round(val * 1e10, 3)} (x1e10)"
-    elif measure in ("rv", "avg_corr", "turnover", "drawdown"):
-        return f"{round(val * 100, 1)}%"
-    elif measure == "cs_spread":
-        return f"{round(val * 10000, 1)}bps"
-    elif measure == "dispersion":
-        return f"{round(val * 100, 2)}%"
-    elif measure == "vov":
-        return f"{round(val, 4)}"
-    elif measure == "skew":
-        return f"{round(val, 3)}"
-    return f"{round(val, 4)}"
 
 def get_tier(measure, val, cal):
+    """Unified tier lookup for lookback dates — returns label only, no reading string."""
     if pd.isna(val):
         return "unavailable"
     if measure in ("rv", "avg_corr", "vov"):
@@ -302,10 +237,100 @@ def get_tier(measure, val, cal):
         else:            return "extreme crash memory"
     return "unavailable"
 
+
+def fmt_val(measure, val):
+    """Display formatter — converts raw values to human-readable strings."""
+    if pd.isna(val):
+        return "N/A"
+    if measure == "amihud":
+        return f"{round(val * 1e10, 3)} (x1e10)"
+    elif measure in ("rv", "avg_corr", "turnover", "drawdown"):
+        return f"{round(val * 100, 1)}%"
+    elif measure == "cs_spread":
+        return f"{round(val * 10000, 1)}bps"
+    elif measure == "dispersion":
+        return f"{round(val * 100, 2)}%"
+    elif measure == "vov":
+        return f"{round(val, 4)}"
+    elif measure == "skew":
+        return f"{round(val, 3)}"
+    return f"{round(val, 4)}"
+
+
+def get_trend_sentence(measure, today_tier, today_val, lookbacks, cal):
+    """
+    Builds the trend sentence appended to each measure reading.
+    lookbacks: dict of period -> {val, tier, date}  (periods: 1W, 1M, 3M)
+    """
+    available = {p: v for p, v in lookbacks.items() if v["tier"] != "unavailable"}
+    if not available:
+        return ""
+
+    # Build ordered sequence: 3M -> 1M -> 1W -> today
+    ordered_periods = [p for p in ["3M", "1M", "1W"] if p in available]
+    ordered_tiers   = [TIER_ORDER.get(available[p]["tier"], 1) for p in ordered_periods]
+    today_score     = TIER_ORDER.get(today_tier, 1)
+    full_sequence   = ordered_tiers + [today_score]
+
+    # Check trajectory — monotonically worsening, improving, flat, or mixed
+    diffs_seq = [full_sequence[i+1] - full_sequence[i] for i in range(len(full_sequence)-1)]
+    all_up    = all(d >= 0 for d in diffs_seq) and any(d > 0 for d in diffs_seq)
+    all_down  = all(d <= 0 for d in diffs_seq) and any(d < 0 for d in diffs_seq)
+    all_flat  = all(d == 0 for d in diffs_seq)
+
+    # ── Measure-specific trajectory words — no universal stress/improve judgement ──
+    if measure == "drawdown":
+        # raw values negative — worsening = more negative = higher tier score
+        if all_flat:   direction = "Stable"
+        elif all_up:   direction = "Worsening consistently"
+        elif all_down: direction = "Recovering consistently"
+        else:
+            net = today_score - ordered_tiers[0]
+            direction = "Net worsening" if net > 0 else "Net recovering" if net < 0 else "Fluctuating"
+
+    elif measure == "skew":
+        # directional memory — higher score = more crash-like
+        if all_flat:   direction = "Stable"
+        elif all_up:   direction = "Becoming more crash-like consistently"
+        elif all_down: direction = "Becoming more rally-like consistently"
+        else:
+            net = today_score - ordered_tiers[0]
+            direction = "Trending more crash-like" if net > 0 else "Trending more rally-like" if net < 0 else "Fluctuating"
+
+    else:
+        # all others: rising / falling — let reader interpret
+        if all_flat:   direction = "Stable"
+        elif all_up:   direction = "Rising consistently"
+        elif all_down: direction = "Falling consistently"
+        else:
+            net = today_score - ordered_tiers[0]
+            direction = "Rising overall" if net > 0 else "Falling overall" if net < 0 else "Fluctuating"
+
+    if direction == "Stable":
+        return "Stable across all lookback windows."
+
+    # Window label
+    n = len(available)
+    window = "over 3 months" if n == 3 else "over available windows" if n == 2 else "over available window"
+
+    # Lookback clauses — oldest first
+    period_labels = {"3M": "three months ago", "1M": "a month ago", "1W": "last week"}
+    clauses = []
+    for period in ["3M", "1M", "1W"]:
+        if period not in available:
+            continue
+        lb = lookbacks[period]
+        clauses.append(f"{lb['tier']} at {fmt_val(measure, lb['val'])} {period_labels[period]}")
+
+    return f"{direction} {window}: was {', '.join(clauses)}."
+
+
 # ─────────────────────────────────────────────
-# TIER → SEVERITY SCORE
+# 3. SEVERITY + OVERALL STORY
 # ─────────────────────────────────────────────
 
+# Stress scores for overall characterisation — separate from TIER_ORDER.
+# TIER_ORDER is for trend direction; SEVERITY is for snapshot stress level.
 SEVERITY = {
     "calm": 0, "moderate": 1, "elevated": 2, "extreme": 3,
     "liquid": 0, "normal": 1, "illiquid": 2, "severely illiquid": 3,
@@ -315,10 +340,6 @@ SEVERITY = {
     "rally-like": 0, "neutral": 1, "crash-like": 2, "extreme crash memory": 3,
 }
 
-
-# ─────────────────────────────────────────────
-# OVERALL STORY BUILDER
-# ─────────────────────────────────────────────
 
 def build_overall_story(tiers, readings):
     rv_t     = tiers.get("rv",         "moderate")
@@ -331,16 +352,11 @@ def build_overall_story(tiers, readings):
     turn_t   = tiers.get("turnover",   "normal")
     skew_t   = tiers.get("skew",       "neutral")
 
-    stress_scores = [SEVERITY.get(rv_t, 1), SEVERITY.get(corr_t, 1),
-                     SEVERITY.get(vov_t, 1), SEVERITY.get(dd_t, 1)]
-    avg_stress = sum(stress_scores) / len(stress_scores)
+    avg_stress = sum([SEVERITY.get(rv_t, 1), SEVERITY.get(corr_t, 1),
+                      SEVERITY.get(vov_t, 1), SEVERITY.get(dd_t, 1)]) / 4
 
-    liq_scores = [SEVERITY.get(amihud_t, 1)]  # only amihud drives true liquidity impairment
-    avg_liq = sum(liq_scores) / len(liq_scores)
-
-    # CS spike or extreme dispersion are standalone stress signals
-    # regardless of what rv/corr/vov show
-    liquidity_event = cs_t == "spike"
+    # CS spike or extreme dispersion lift the overall stress level independently
+    liquidity_event    = cs_t == "spike"
     dispersion_extreme = disp_t == "extreme"
 
     if avg_stress >= 2.5:
@@ -425,18 +441,14 @@ def build_overall_story(tiers, readings):
 
 
 # ─────────────────────────────────────────────
-# FORMAT HELPER
+# 4. FORMATTING + ORCHESTRATION
 # ─────────────────────────────────────────────
 
 def fmt_row(measure, tier, reading):
-    label     = MEASURE_LABELS.get(measure, measure)
-    tier_str  = f"[{tier.upper()}]"
+    label    = MEASURE_LABELS.get(measure, measure)
+    tier_str = f"[{tier.upper()}]"
     return f"  {label:<22}  {tier_str:<22}  {reading}"
 
-
-# ─────────────────────────────────────────────
-# MAIN NARRATIVE FUNCTION
-# ─────────────────────────────────────────────
 
 def generate_narrative(univ, query_date, cal, df):
     dt = pd.Timestamp(query_date)
@@ -450,26 +462,23 @@ def generate_narrative(univ, query_date, cal, df):
 
     row = df.loc[actual_date]
 
-    # ── Compute lookback dates (always backward) ──
     def nearest_valid_date(target, measure, window_days=5):
-        # Search within window_days on either side of target
-        # pick nearest date that has a non-null value for this measure
+        """Find nearest date within window_days of target that has a non-null value."""
         lo = target - pd.DateOffset(days=window_days)
         hi = target + pd.DateOffset(days=window_days)
         candidates = df.index[(df.index >= lo) & (df.index <= hi) & (df[measure].notna())]
         if len(candidates) == 0:
             return None
-        # pick closest to target
         return candidates[np.argmin(np.abs(candidates - target))]
 
     def build_lookbacks(measure):
         measure_cal = cal.get(measure, {})
-        result = {}
         offsets = {
             "1W": actual_date - pd.DateOffset(weeks=1),
             "1M": actual_date - pd.DateOffset(months=1),
             "3M": actual_date - pd.DateOffset(months=3),
         }
+        result = {}
         for period, target in offsets.items():
             ldate = nearest_valid_date(target, measure)
             if ldate is None:
@@ -501,12 +510,11 @@ def generate_narrative(univ, query_date, cal, df):
             tiers[measure]    = "unavailable"
             readings[measure] = "data not available for this date"
         else:
-            tier, reading = fn(val, measure_cal)
-            # Append trend sentence
-            lookbacks     = build_lookbacks(measure)
-            trend_sent    = get_trend_sentence(measure, tier, val, lookbacks, measure_cal)
-            readings[measure] = f"{reading}. {trend_sent}" if trend_sent else reading
+            tier, reading  = fn(val, measure_cal)
+            lookbacks      = build_lookbacks(measure)
+            trend_sent     = get_trend_sentence(measure, tier, val, lookbacks, measure_cal)
             tiers[measure]    = tier
+            readings[measure] = f"{reading}. {trend_sent}" if trend_sent else reading
 
     overall = build_overall_story(tiers, readings)
 
@@ -541,7 +549,7 @@ def generate_narrative(univ, query_date, cal, df):
 
 
 # ─────────────────────────────────────────────
-# ENTRY POINT
+# 5. ENTRY POINT
 # ─────────────────────────────────────────────
 
 def main():
