@@ -55,15 +55,16 @@ def compute_calibration(df, univ_name):
             cal[measure]["p95"] = round(float(np.percentile(df[measure].dropna(), 95)), 6)
             continue
 
+        scale = 1e10 if measure == "amihud" else 1.0
         pct_values = np.percentile(series, pct_list)
         cal[measure] = {
-            f"p{p}": round(float(v), 8)
+            f"p{p}": round(float(v) * scale, 6)
             for p, v in zip(pct_list, pct_values)
         }
         # Store p5, p50, p95 for context / display
-        cal[measure]["p5"]  = round(float(np.percentile(series, 5)), 8)
-        cal[measure]["p50"] = round(float(np.percentile(series, 50)), 8)
-        cal[measure]["p95"] = round(float(np.percentile(series, 95)), 8)
+        cal[measure]["p5"]  = round(float(np.percentile(series, 5))  * scale, 6)
+        cal[measure]["p50"] = round(float(np.percentile(series, 50)) * scale, 6)
+        cal[measure]["p95"] = round(float(np.percentile(series, 95)) * scale, 6)
 
     return cal
 
