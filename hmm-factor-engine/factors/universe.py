@@ -3,6 +3,9 @@ universe.py
 ===========
 Shared universe construction utility for all factor scripts.
 
+Expects prices_hmm_daily.parquet in LONG format:
+    symbol | date | open | high | low | close | volume
+
 Applies two filters at each month T:
   1. Point-in-time Nifty 500 membership (from constituent CSV)
   2. ADTV filter — average daily traded value (price x volume)
@@ -15,17 +18,17 @@ ADTV threshold is time-varying (anchored to market size):
 
 Usage
 -----
-from factors.universe import build_universe_lookup, get_clean_universe
+from factors.universe import build_universe_lookup, get_clean_universe, load_prices_long
 
 universe_df = build_universe_lookup(CONSTITUENT_CSV)
+prices_long = load_prices_long(PRICE_FILE)
 
 # At each month T:
 universe = get_clean_universe(
-    date           = date,
-    daily_prices   = daily_prices,
-    daily_volume   = daily_volume,
-    universe_df    = universe_df,
-    sym_map        = sym_map,
+    date        = date,
+    prices_long = prices_long,
+    universe_df = universe_df,
+    sym_map     = sym_map,
 )
 """
 
@@ -36,19 +39,10 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-CRORE    = 1e7   # 1 crore = 10 million
+CRORE = 1e7   # 1 crore = 10 million
 
-# Time-varying ADTV thresholds (cr)
-# Pre-2018     : 10cr — market was smaller, liquidity was lower
-# 2018-2021    : 20cr — mid-phase
-# 2022-present : 30cr — current threshold
+
 def get_adtv_threshold(date: pd.Timestamp) -> float:
-    """
-    Return ADTV threshold in crore for a given date.
-      pre-2018     : 10cr
-      2018-2021    : 20cr
-      2022-present : 30cr
-    """
     year = date.year
     if year < 2018:
         return 10.0
@@ -59,17 +53,24 @@ def get_adtv_threshold(date: pd.Timestamp) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Load long-format prices
+# ---------------------------------------------------------------------------
+def load_prices_long(price_file: Path) -> pd.DataFrame:
+    """
+    Load prices_hmm_daily.parquet (long format) and return a clean DataFrame.
+    Columns: symbol, date, open, high, low, close, volume
+    date is parsed to datetime.
+    """
+    df = pd.read_parquet(price_file)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Step 1 — Build point-in-time universe lookup
 # ---------------------------------------------------------------------------
 def build_universe_lookup(csv_file: Path) -> pd.DataFrame:
-    """
-    Load constituent CSV and build point-in-time lookup table.
-
-    Returns
-    -------
-    pd.DataFrame with columns: effective_date, symbols_list
-    Sorted by effective_date ascending.
-    """
     df = pd.read_csv(csv_file)
     df["effective_date"] = pd.to_datetime(df["effective_date"])
     df = df.sort_values("effective_date").reset_index(drop=True)
@@ -80,10 +81,6 @@ def build_universe_lookup(csv_file: Path) -> pd.DataFrame:
 
 
 def get_pit_universe(date: pd.Timestamp, universe_df: pd.DataFrame) -> list:
-    """
-    Get point-in-time Nifty 500 universe for a given date.
-    Uses most recent snapshot with effective_date <= date.
-    """
     valid = universe_df[universe_df["effective_date"] <= date]
     if valid.empty:
         return []
@@ -91,49 +88,46 @@ def get_pit_universe(date: pd.Timestamp, universe_df: pd.DataFrame) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 — ADTV filter
+# Step 2 — ADTV filter (long format)
 # ---------------------------------------------------------------------------
 def compute_adtv(
-    date: pd.Timestamp,
-    symbols: list,
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
-    sym_map: dict,
-    adtv_days: int = 63,
+    date      : pd.Timestamp,
+    symbols   : list,
+    prices_long: pd.DataFrame,
+    sym_map   : dict,
+    adtv_days : int = 63,
 ) -> pd.Series:
     """
     Compute average daily traded value (price x volume) for each stock
     over the past adtv_days trading days up to and including date.
+    Works from long-format prices DataFrame.
 
     Returns
     -------
     pd.Series — ADTV in crore, indexed by symbol
     """
-    idx       = daily_prices.index
-    valid_idx = idx[idx <= date]
+    # All trading dates up to date
+    all_dates   = prices_long["date"].unique()
+    all_dates   = np.sort(all_dates[all_dates <= np.datetime64(date)])
+    window_dates = all_dates[-adtv_days:] if len(all_dates) >= adtv_days else all_dates
 
-    if len(valid_idx) < adtv_days:
-        window_idx = valid_idx
-    else:
-        window_idx = valid_idx[-adtv_days:]
+    if len(window_dates) == 0:
+        return pd.Series(dtype=float)
+
+    # Filter to window
+    window_df = prices_long[prices_long["date"].isin(window_dates)]
 
     adtv = {}
     for sym in symbols:
         col = sym_map.get(sym, sym)
-        if col not in daily_prices.columns:
-            continue
-        if col not in daily_volume.columns:
-            continue
+        sym_df = window_df[window_df["symbol"] == col][["date", "close", "volume"]].dropna()
 
-        px  = daily_prices[col].reindex(window_idx)
-        vol = daily_volume[col].reindex(window_idx)
-
-        dtv = (px * vol).dropna()
-
-        if len(dtv) < 10:
+        if len(sym_df) < 10:
             continue
 
+        dtv      = sym_df["close"] * sym_df["volume"]
         adtv_val = dtv.mean() / CRORE
+
         if pd.notna(adtv_val) and adtv_val > 0:
             adtv[sym] = adtv_val
 
@@ -144,13 +138,12 @@ def compute_adtv(
 # Step 3 — Combined clean universe
 # ---------------------------------------------------------------------------
 def get_clean_universe(
-    date: pd.Timestamp,
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
-    universe_df: pd.DataFrame,
-    sym_map: dict,
-    adtv_crore: float = None,   # if None, uses time-varying threshold
-    adtv_days: int    = 63,
+    date        : pd.Timestamp,
+    prices_long : pd.DataFrame,
+    universe_df : pd.DataFrame,
+    sym_map     : dict,
+    adtv_crore  : float = None,
+    adtv_days   : int   = 63,
 ) -> list:
     """
     Get clean universe at month-end date T.
@@ -158,7 +151,7 @@ def get_clean_universe(
     Applies:
       1. Point-in-time Nifty 500 membership
       2. ADTV >= threshold (time-varying by default, or fixed if passed)
-      3. Must have price data (non-NaN) at date T
+      3. Must have price data (non-NaN close) at or before date T
 
     Returns
     -------
@@ -173,21 +166,31 @@ def get_clean_universe(
     threshold = adtv_crore if adtv_crore is not None else get_adtv_threshold(date)
 
     # 3. ADTV filter
-    adtv      = compute_adtv(date, pit, daily_prices, daily_volume, sym_map, adtv_days)
+    adtv      = compute_adtv(date, pit, prices_long, sym_map, adtv_days)
     adtv_pass = adtv[adtv >= threshold].index.tolist()
 
-    # 4. Must have price at date T
-    clean = []
+    # 4. Must have a valid close price at or before date T
+    recent = prices_long[prices_long["date"] <= date]
+    clean  = []
     for sym in adtv_pass:
-        col = sym_map.get(sym, sym)
-        if col not in daily_prices.columns:
-            continue
-        idx   = daily_prices.index
-        valid = idx[idx <= date]
-        if valid.empty:
-            continue
-        last_px = daily_prices.loc[valid[-1], col]
-        if pd.notna(last_px) and last_px > 0:
+        col    = sym_map.get(sym, sym)
+        sym_px = recent[recent["symbol"] == col]["close"].dropna()
+        if not sym_px.empty and sym_px.iloc[-1] > 0:
             clean.append(sym)
 
     return clean
+
+
+# ---------------------------------------------------------------------------
+# Helper — build wide monthly close from long format (used by factor scripts)
+# ---------------------------------------------------------------------------
+def build_monthly_close(prices_long: pd.DataFrame) -> pd.DataFrame:
+    """
+    Pivot long-format daily prices to wide monthly close.
+    Index: month-end dates. Columns: symbols.
+    """
+    daily_wide = prices_long.pivot(index="date", columns="symbol", values="close")
+    daily_wide.index = pd.to_datetime(daily_wide.index)
+    daily_wide.columns.name = None
+    monthly = daily_wide.resample("ME").last()
+    return monthly

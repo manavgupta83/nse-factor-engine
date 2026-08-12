@@ -1,6 +1,6 @@
 """
-mom.py
-======
+compute_mom.py
+==============
 MOM — Momentum Factor Construction
 
 Signal   : cumulative return months t-12 to t-2
@@ -10,19 +10,13 @@ Short leg: bottom decile by signal (lowest momentum)
 Return   : equal-weight long leg minus equal-weight short leg (next month)
 Min stocks: 20 in universe after ADTV + NaN filter
 
-Two modes:
-  BACKTEST — loops over all months, produces return series
-  LIVE     — single month signal + portfolio for production use
-
 Output
 ------
 hmm-factor-engine/factors/data/mom_returns.parquet
-  Columns: date, mom_return, long_return, short_return,
-           long_count, short_count, universe_size
 
 Usage
 -----
-  python3 hmm-factor-engine/factors/mom.py
+  python3 hmm-factor-engine/factors/compute_mom.py
 """
 
 import csv
@@ -33,9 +27,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# Add factors dir to path for universe import
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe
+from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -47,7 +40,6 @@ DATA_DIR        = BASE_DIR / "data"
 FACTORS_DIR     = Path(__file__).parent / "data"
 
 PRICE_FILE      = DATA_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE     = DATA_DIR / "prices_hmm_daily_volume.parquet"
 CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_history/"
                        "nifty500_2005-01-01_to_2026-06-30.csv")
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
@@ -65,7 +57,6 @@ LONG_PCTILE     = 0.90
 SHORT_PCTILE    = 0.10
 
 
-
 # ---------------------------------------------------------------------------
 # Load helpers
 # ---------------------------------------------------------------------------
@@ -77,35 +68,15 @@ def load_symbol_map(map_file: Path) -> dict:
     return sym_map
 
 
-def load_monthly_prices(price_file: Path) -> pd.DataFrame:
-    daily = pd.read_parquet(price_file)
-    daily.index = pd.to_datetime(daily.index)
-    monthly = daily.resample("ME").last()
-    return monthly
-
-
 # ---------------------------------------------------------------------------
-# Core signal function (BACKTEST + LIVE)
+# Core signal function
 # ---------------------------------------------------------------------------
 def compute_mom_signal(
-    monthly_prices: pd.DataFrame,
+    monthly_prices  : pd.DataFrame,
     universe_symbols: list,
-    date: pd.Timestamp,
-    sym_map: dict,
+    date            : pd.Timestamp,
+    sym_map         : dict,
 ) -> pd.Series:
-    """
-    Compute momentum signal for each stock in universe at date T.
-    Signal = (price[T-2] / price[T-12]) - 1
-    """
-    resolved = {}
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col in monthly_prices.columns:
-            resolved[sym] = col
-
-    if not resolved:
-        return pd.Series(dtype=float)
-
     idx = monthly_prices.index
     if date not in idx:
         return pd.Series(dtype=float)
@@ -118,7 +89,10 @@ def compute_mom_signal(
     t_minus_12 = idx[pos - 12]
 
     signals = {}
-    for sym, col in resolved.items():
+    for sym in universe_symbols:
+        col = sym_map.get(sym, sym)
+        if col not in monthly_prices.columns:
+            continue
         p_t2  = monthly_prices.loc[t_minus_2,  col]
         p_t12 = monthly_prices.loc[t_minus_12, col]
         if pd.notna(p_t2) and pd.notna(p_t12) and p_t12 > 0:
@@ -128,10 +102,10 @@ def compute_mom_signal(
 
 
 def compute_next_month_returns(
-    monthly_prices: pd.DataFrame,
+    monthly_prices  : pd.DataFrame,
     universe_symbols: list,
-    date: pd.Timestamp,
-    sym_map: dict,
+    date            : pd.Timestamp,
+    sym_map         : dict,
 ) -> pd.Series:
     idx = monthly_prices.index
     if date not in idx:
@@ -158,71 +132,28 @@ def compute_next_month_returns(
 
 
 # ---------------------------------------------------------------------------
-# Single month portfolio (LIVE mode)
-# ---------------------------------------------------------------------------
-def compute_mom_portfolio(
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
-    universe_df: pd.DataFrame,
-    date: pd.Timestamp,
-    sym_map: dict,
-) -> dict:
-    """LIVE MODE — compute signal and portfolio for a single month T."""
-    monthly_prices = daily_prices.resample("ME").last()
-
-    universe = get_clean_universe(
-        date, daily_prices, daily_volume, universe_df, sym_map
-    )
-
-    signal = compute_mom_signal(monthly_prices, universe, date, sym_map)
-
-    if len(signal) < MIN_STOCKS:
-        return {"signal": signal, "long_stocks": [], "short_stocks": [],
-                "long_weight": 0, "short_weight": 0}
-
-    long_thresh  = signal.quantile(LONG_PCTILE)
-    short_thresh = signal.quantile(SHORT_PCTILE)
-    long_stocks  = signal[signal >= long_thresh].index.tolist()
-    short_stocks = signal[signal <= short_thresh].index.tolist()
-
-    return {
-        "signal"      : signal,
-        "long_stocks" : long_stocks,
-        "short_stocks": short_stocks,
-        "long_weight" : 1.0 / len(long_stocks)  if long_stocks  else 0,
-        "short_weight": 1.0 / len(short_stocks) if short_stocks else 0,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Backtest loop
 # ---------------------------------------------------------------------------
 def run_backtest(
     monthly_prices: pd.DataFrame,
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
-    universe_df: pd.DataFrame,
-    sym_map: dict,
-    start: str = BACKTEST_START,
-    end: str   = BACKTEST_END,
-) -> pd.DataFrame:
-    """BACKTEST MODE — loop over all months, compute MOM factor return series."""
+    prices_long   : pd.DataFrame,
+    universe_df   : pd.DataFrame,
+    sym_map       : dict,
+    start         : str = BACKTEST_START,
+    end           : str = BACKTEST_END,
+) -> tuple:
     periods     = pd.period_range(start=start, end=end, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
     valid_dates = [d for d in dates if d in monthly_prices.index]
 
-    records = []
+    records        = []
     signal_records = []
-    for date in valid_dates:
-        # Get clean universe with ADTV filter
-        universe = get_clean_universe(
-            date, daily_prices, daily_volume, universe_df, sym_map
-        )
 
+    for date in valid_dates:
+        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
         if not universe:
             continue
 
-        # Compute signal
         signal = compute_mom_signal(monthly_prices, universe, date, sym_map)
 
         if len(signal) < MIN_STOCKS:
@@ -232,7 +163,12 @@ def run_backtest(
         if SAVE_SIGNALS:
             pct = signal.rank(pct=True)
             for sym, raw in signal.items():
-                signal_records.append({"nse_ticker": sym, "date": date, "signal": float(raw), "percentile": float(pct[sym])})
+                signal_records.append({
+                    "nse_ticker" : sym,
+                    "date"       : date,
+                    "signal"     : float(raw),
+                    "percentile" : float(pct[sym]),
+                })
 
         long_thresh  = signal.quantile(LONG_PCTILE)
         short_thresh = signal.quantile(SHORT_PCTILE)
@@ -242,10 +178,7 @@ def run_backtest(
         if not long_stocks or not short_stocks:
             continue
 
-        next_returns = compute_next_month_returns(
-            monthly_prices, universe, date, sym_map
-        )
-
+        next_returns = compute_next_month_returns(monthly_prices, universe, date, sym_map)
         if next_returns.empty:
             continue
 
@@ -255,15 +188,11 @@ def run_backtest(
         if not long_rets or not short_rets:
             continue
 
-        long_ret  = np.mean(long_rets)
-        short_ret = np.mean(short_rets)
-        mom_ret   = long_ret - short_ret
-
         records.append({
             "date"         : date,
-            "mom_return"   : mom_ret,
-            "long_return"  : long_ret,
-            "short_return" : short_ret,
+            "mom_return"   : np.mean(long_rets) - np.mean(short_rets),
+            "long_return"  : np.mean(long_rets),
+            "short_return" : np.mean(short_rets),
             "long_count"   : len(long_rets),
             "short_count"  : len(short_rets),
             "universe_size": len(signal),
@@ -286,26 +215,20 @@ def main():
     sym_map = load_symbol_map(SYMBOL_MAP_FILE)
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("Loading daily prices and volume ...")
-    daily_prices = pd.read_parquet(PRICE_FILE)
-    daily_prices.index = pd.to_datetime(daily_prices.index)
-    daily_volume = pd.read_parquet(VOLUME_FILE)
-    daily_volume.index = pd.to_datetime(daily_volume.index)
-    print(f"  Daily prices shape : {daily_prices.shape}")
+    print("Loading daily prices (long format) ...")
+    prices_long = load_prices_long(PRICE_FILE)
+    print(f"  Prices shape: {prices_long.shape}")
 
-    print("Building monthly prices ...")
-    monthly_prices = daily_prices.resample("ME").last()
-    print(f"  Monthly prices shape: {monthly_prices.shape}")
+    print("Building monthly close prices ...")
+    monthly_prices = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_prices.shape}")
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
     print(f"  {len(universe_df)} rebalance snapshots loaded")
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    print(f"  ADTV filter: time-varying (10/20/30cr)")
-    results, signal_records = run_backtest(
-        monthly_prices, daily_prices, daily_volume, universe_df, sym_map
-    )
+    results, signal_records = run_backtest(monthly_prices, prices_long, universe_df, sym_map)
 
     if results.empty:
         print("ERROR: no results produced")
@@ -339,10 +262,12 @@ def main():
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
+
     if SAVE_SIGNALS and signal_records:
         sig_df = pd.DataFrame(signal_records)
         sig_df.to_parquet(SIGNALS_FILE, index=False)
         print(f"Saved signals -> {SIGNALS_FILE}  ({len(sig_df)} rows)")
+
     print("Done.")
 
 

@@ -4,15 +4,15 @@ compute_quality.py
 Quality Factor Construction
 
 Non-financials:
-    Quality = 0.33*Z(ROE) - 0.33*Z(D/E) - 0.33*Z(EPS_growth_std)
+    Quality = 0.33*Z(ROCE) - 0.33*Z(D/E) - 0.33*Z(EPS_growth_std)
 
 Financials:
     Quality = 0.5*Z(ROE) - 0.5*Z(EPS_growth_std)
 
 Where:
-    ROE           = net_profit_ann / book_equity
+    ROCE          = operating_profit / (book_equity + total_debt)  (non-fins)
+    ROE           = net_profit_ann / book_equity                   (fins)
     D/E           = total_debt / book_equity
-    EPS           = net_profit_ann / shares_cr
     EPS_growth_std= std dev of annual EPS growth (min 3 years, prefer 5)
 
 Key data rules:
@@ -29,7 +29,7 @@ Output
 ------
 hmm-factor-engine/data/factor_quality.parquet
     Columns: nse_ticker, date, is_financial,
-             raw_roe, raw_de, raw_eps_std,
+             raw_roe, raw_roce, raw_de, raw_eps_std,
              score_within, score_combined
 
 Usage
@@ -46,7 +46,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe
+from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -58,7 +58,6 @@ DATA_DIR        = BASE_DIR / "data"
 FACTORS_DIR     = Path(__file__).parent / "data"
 
 PRICE_FILE      = DATA_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE     = DATA_DIR / "prices_hmm_daily_volume.parquet"
 FUND_FILE       = DATA_DIR / "fundamentals_annual.parquet"
 SECTOR_FILE     = DATA_DIR / "ticker_to_sector.csv"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
@@ -78,7 +77,7 @@ BACKTEST_START  = "2020-07"
 BACKTEST_END    = "2026-06"
 WINSOR_LOW      = 0.01
 WINSOR_HIGH     = 0.99
-MIN_EPS_YEARS   = 3    # minimum annual EPS observations for growth std
+MIN_EPS_YEARS   = 3
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -131,66 +130,42 @@ def zscore(s: pd.Series) -> pd.Series:
 # Annualise net_profit for most recent incomplete fiscal year
 # ---------------------------------------------------------------------------
 def annualise_current_year(ticker_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For the most recent fiscal year that does not have a March row,
-    reconstruct annualised net_profit from available quarterly rows.
-
-    Logic (standalone quarters, not cumulative):
-        Mar  → full year as-is
-        Dec  → (Dec + Sep + Jun) * 4/3  fallback: (Dec+Jun)*4/3 or Dec*4/3
-        Sep  → (Sep + Jun) * 2          fallback: Sep*2
-        Jun  → Jun * 4
-
-    Only applied to the most recent incomplete year.
-    All historical March rows are left unchanged.
-    """
-    df = ticker_df.copy().sort_values("fy_end").reset_index(drop=True)
-
-    # Identify the latest fiscal year end
+    df     = ticker_df.copy().sort_values("fy_end").reset_index(drop=True)
     latest = df.iloc[-1]
 
-    # If latest row is March → full year filed, no reconstruction needed
     if latest["fy_month"] == 3:
         return df
 
-    # Latest row is an interim filing — reconstruct annualised net_profit
     latest_year  = latest["fy_end"].year
     latest_month = latest["fy_month"]
 
-    # Get all rows for the current fiscal year (same calendar year)
     current_yr_rows = df[df["fy_end"].dt.year == latest_year].copy()
 
-    # Extract quarterly net_profit values
     def get_q(month):
         row = current_yr_rows[current_yr_rows["fy_month"] == month]
         if len(row) == 0:
             return np.nan
         return row.iloc[0]["net_profit"]
 
-    q1 = get_q(6)   # Jun
-    q2 = get_q(9)   # Sep
-    q3 = get_q(12)  # Dec
+    q1 = get_q(6)
+    q2 = get_q(9)
+    q3 = get_q(12)
 
     ann_np = np.nan
     method = "DROPPED"
 
     if latest_month == 6:
-        # Only Q1 available
         if pd.notna(q1):
             ann_np = q1 * 4
             method = "Jun*4"
-
     elif latest_month == 9:
-        # Q2 available
         if pd.notna(q2) and pd.notna(q1):
             ann_np = (q2 + q1) * 2
             method = "Sep+Jun*2"
         elif pd.notna(q2):
             ann_np = q2 * 2
             method = "Sep*2 (Jun missing)"
-
     elif latest_month == 12:
-        # Q3 available
         if pd.notna(q3) and pd.notna(q2) and pd.notna(q1):
             ann_np = (q3 + q2 + q1) * (4/3)
             method = "Dec+Sep+Jun*4/3"
@@ -201,8 +176,6 @@ def annualise_current_year(ticker_df: pd.DataFrame) -> pd.DataFrame:
             ann_np = q3 * (4/3)
             method = "Dec*4/3 (Sep+Jun missing)"
 
-    # Update net_profit_ann for current year rows
-    # Only update the latest row (use as the single current-year data point)
     df.loc[df.index[-1], "net_profit_ann"] = ann_np
     df.loc[df.index[-1], "ann_method"]     = method
 
@@ -215,26 +188,18 @@ def annualise_current_year(ticker_df: pd.DataFrame) -> pd.DataFrame:
 def load_fundamentals() -> pd.DataFrame:
     df = pd.read_parquet(FUND_FILE)
 
-    # Parse fiscal year end
     df["fy_end"]   = df["fiscal_year"].apply(parse_fiscal_year_end)
     df             = df[df["fy_end"].notna()].copy()
     df["fy_month"] = df["fy_end"].dt.month
+    df             = df.sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
 
-    # Sort for correct ffill
-    df = df.sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
-
-    # Forward fill B/S fields within ticker
     for col in ["book_equity", "shares_cr", "total_debt"]:
         df[col] = df.groupby("nse_ticker")[col].ffill()
 
-    # Fill NaN total_debt with 0 (verified debt-free companies)
-    df["total_debt"] = df["total_debt"].fillna(0)
-
-    # Initialise net_profit_ann as copy of net_profit for all rows
+    df["total_debt"]     = df["total_debt"].fillna(0)
     df["net_profit_ann"] = df["net_profit"]
     df["ann_method"]     = "Mar_actual"
 
-    # Apply annualisation only to tickers whose latest row is not March
     results = []
     for ticker, grp in df.groupby("nse_ticker"):
         latest_month = grp.iloc[-1]["fy_month"]
@@ -243,40 +208,29 @@ def load_fundamentals() -> pd.DataFrame:
         results.append(grp)
 
     df = pd.concat(results, ignore_index=True)
-
-    # 90-day filing lag
     df["available_from"] = df["fy_end"] + pd.Timedelta(days=90)
 
     return df
 
 
 # ---------------------------------------------------------------------------
-# Build EPS history per ticker (annual rows only + annualised current year)
+# Build EPS history per ticker
 # ---------------------------------------------------------------------------
 def build_eps_history(fund_df: pd.DataFrame) -> dict:
-    """
-    Returns dict: ticker -> pd.Series of annual EPS indexed by fy_end date.
-    Only uses:
-      - Historical March rows (full year actuals)
-      - Annualised current year row (if latest is non-March)
-    """
     eps_history = {}
 
     for ticker, grp in fund_df.groupby("nse_ticker"):
         grp = grp.sort_values("fy_end").copy()
 
-        # Separate March rows (full year) and latest non-March (annualised)
-        march_rows  = grp[grp["fy_month"] == 3].copy()
-        latest_row  = grp.iloc[[-1]]
+        march_rows = grp[grp["fy_month"] == 3].copy()
+        latest_row = grp.iloc[[-1]]
 
         if latest_row.iloc[0]["fy_month"] != 3:
-            # Use annualised net_profit_ann for current year
-            interim = latest_row.copy()
+            interim     = latest_row.copy()
             annual_rows = pd.concat([march_rows, interim], ignore_index=True)
         else:
             annual_rows = march_rows.copy()
 
-        # Compute EPS from net_profit_ann / shares_cr
         annual_rows = annual_rows[
             annual_rows["net_profit_ann"].notna() &
             annual_rows["shares_cr"].notna() &
@@ -297,22 +251,15 @@ def build_eps_history(fund_df: pd.DataFrame) -> dict:
 # Compute rolling EPS growth std for a ticker as of date T
 # ---------------------------------------------------------------------------
 def get_eps_growth_std(
-    ticker     : str,
-    date       : pd.Timestamp,
-    eps_history: dict,
+    ticker            : str,
+    date              : pd.Timestamp,
+    eps_history       : dict,
     available_from_map: dict,
 ) -> float:
-    """
-    Get EPS growth std dev using up to 5 most recent annual EPS values
-    available as of date T (respecting 90-day filing lag).
-    Min observations: MIN_EPS_YEARS annual EPS values.
-    """
     if ticker not in eps_history:
         return np.nan
 
-    eps = eps_history[ticker]
-
-    # Filter to rows available at date T
+    eps         = eps_history[ticker]
     avail_dates = available_from_map.get(ticker, {})
     valid_eps   = eps[
         eps.index.map(lambda d: avail_dates.get(d, pd.NaT)) <= date
@@ -321,7 +268,6 @@ def get_eps_growth_std(
     if len(valid_eps) < MIN_EPS_YEARS:
         return np.nan
 
-    # Use last 5 years
     valid_eps  = valid_eps.iloc[-5:]
     eps_growth = valid_eps.pct_change().dropna()
 
@@ -342,12 +288,6 @@ def get_signals_at_date(
     eps_history       : dict,
     available_from_map: dict,
 ) -> pd.DataFrame:
-    """
-    For each ticker in universe:
-    - Find latest row with book_equity not null and available_from <= date
-    - Compute ROE, D/E, EPS_growth_std
-    """
-    # Filter to rows with book_equity available at date T
     avail = fund_df[
         (fund_df["available_from"] <= date) &
         (fund_df["book_equity"].notna())
@@ -375,9 +315,20 @@ def get_signals_at_date(
         if pd.isna(be) or be == 0:
             continue
 
-        # ROE — use net_profit_ann
+        # ROE — used for financials in composite
         np_ann  = row["net_profit_ann"]
         raw_roe = (np_ann / be) if pd.notna(np_ann) else np.nan
+
+        # ROCE — non-financials only: operating_profit / (book_equity + total_debt)
+        # Financials: ROCE not meaningful, raw_roce = NaN
+        if is_fin:
+            raw_roce = np.nan
+        else:
+            op = row.get("operating_profit", np.nan)
+            td = row.get("total_debt", np.nan)
+            td = 0.0 if pd.isna(td) else td
+            ce = be + td
+            raw_roce = (op / ce) if (pd.notna(op) and ce != 0) else np.nan
 
         # D/E — non-financials only
         if not is_fin:
@@ -387,18 +338,18 @@ def get_signals_at_date(
             raw_de = np.nan
 
         # EPS growth std
-        raw_eps_std = get_eps_growth_std(
-            ticker, date, eps_history, available_from_map
-        )
+        raw_eps_std = get_eps_growth_std(ticker, date, eps_history, available_from_map)
 
-        # Need at least ROE and EPS std
-        if pd.isna(raw_roe) and pd.isna(raw_eps_std):
+        # Need at least one profitability signal and EPS std
+        profitability = raw_roce if not is_fin else raw_roe
+        if pd.isna(profitability) and pd.isna(raw_eps_std):
             continue
 
         rows.append({
             "nse_ticker"  : ticker,
             "is_financial": is_fin,
             "raw_roe"     : raw_roe,
+            "raw_roce"    : raw_roce,
             "raw_de"      : raw_de,
             "raw_eps_std" : raw_eps_std,
         })
@@ -411,8 +362,8 @@ def get_signals_at_date(
 # ---------------------------------------------------------------------------
 def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
     """
-    Non-financials: Quality = 0.33*Z(ROE) - 0.33*Z(D/E) - 0.33*Z(EPS_std)
-    Financials    : Quality = 0.50*Z(ROE) - 0.50*Z(EPS_std)
+    Non-financials: Quality = 0.33*Z(ROCE) - 0.33*Z(D/E) - 0.33*Z(EPS_std)
+    Financials    : Quality = 0.50*Z(ROE)  - 0.50*Z(EPS_std)
 
     score_within  : computed within fin/non-fin group, concatenated
     score_combined: score_within re-z-scored across all tickers
@@ -430,12 +381,14 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
         if len(grp) < 5:
             continue
 
-        # Z-score each component within group
-        if grp["raw_roe"].notna().sum() >= 5:
-            z_roe = zscore(winsorise(grp["raw_roe"].dropna()))
-            result.loc[grp["raw_roe"].notna() & mask, "z_roe"] = z_roe.values
+        # Profitability: ROCE for non-fins, ROE for fins
+        prof_col = "raw_roce" if not is_fin else "raw_roe"
+
+        if grp[prof_col].notna().sum() >= 5:
+            z_prof = zscore(winsorise(grp[prof_col].dropna()))
+            result.loc[grp[prof_col].notna() & mask, "z_prof"] = z_prof.values
         else:
-            result.loc[mask, "z_roe"] = np.nan
+            result.loc[mask, "z_prof"] = np.nan
 
         if grp["raw_eps_std"].notna().sum() >= 5:
             z_eps = zscore(winsorise(grp["raw_eps_std"].dropna()))
@@ -449,42 +402,39 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
         else:
             result.loc[mask, "z_de"] = np.nan
 
-        # Composite score — proportional reweighting for missing components
-        # Never substitute 0 for missing — reweight among available components
         for idx in result[mask].index:
-            roe     = result.loc[idx, "z_roe"]
+            z_p     = result.loc[idx, "z_prof"]
             de      = result.loc[idx, "z_de"]
             eps_std = result.loc[idx, "z_eps_std"]
 
             if not is_fin:
-                have_roe     = pd.notna(roe)
+                have_prof    = pd.notna(z_p)
                 have_de      = pd.notna(de)
                 have_eps_std = pd.notna(eps_std)
 
-                if have_roe and have_de and have_eps_std:
-                    s = 0.33*roe - 0.33*de - 0.33*eps_std
-                elif have_roe and have_de:
-                    s = 0.50*roe - 0.50*de
-                elif have_roe and have_eps_std:
-                    s = 0.50*roe - 0.50*eps_std
-                elif have_roe:
-                    s = roe
+                if have_prof and have_de and have_eps_std:
+                    s = 0.33*z_p - 0.33*de - 0.33*eps_std
+                elif have_prof and have_de:
+                    s = 0.50*z_p - 0.50*de
+                elif have_prof and have_eps_std:
+                    s = 0.50*z_p - 0.50*eps_std
+                elif have_prof:
+                    s = z_p
                 else:
                     s = np.nan
             else:
-                have_roe     = pd.notna(roe)
+                have_prof    = pd.notna(z_p)
                 have_eps_std = pd.notna(eps_std)
 
-                if have_roe and have_eps_std:
-                    s = 0.50*roe - 0.50*eps_std
-                elif have_roe:
-                    s = roe
+                if have_prof and have_eps_std:
+                    s = 0.50*z_p - 0.50*eps_std
+                elif have_prof:
+                    s = z_p
                 else:
                     s = np.nan
 
             result.loc[idx, "score_within"] = s
 
-    # Re-z-score across all tickers
     valid = result["score_within"].dropna()
     if len(valid) >= 5:
         result["score_combined"] = zscore(result["score_within"])
@@ -496,8 +446,8 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
 # Backtest loop
 # ---------------------------------------------------------------------------
 def run_backtest(
-    daily_prices      : pd.DataFrame,
-    daily_volume      : pd.DataFrame,
+    prices_long       : pd.DataFrame,
+    monthly_px        : pd.DataFrame,
     universe_df       : pd.DataFrame,
     fund_df           : pd.DataFrame,
     sector_map        : pd.DataFrame,
@@ -508,15 +458,12 @@ def run_backtest(
 
     periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
-    monthly_px  = daily_prices.resample("ME").last()
     valid_dates = [d for d in dates if d in monthly_px.index]
 
     all_records = []
 
     for date in valid_dates:
-        universe = get_clean_universe(
-            date, daily_prices, daily_volume, universe_df, sym_map
-        )
+        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
         if not universe:
             continue
 
@@ -531,7 +478,7 @@ def run_backtest(
         scored["date"] = date
         all_records.append(scored[[
             "nse_ticker", "date", "is_financial",
-            "raw_roe", "raw_de", "raw_eps_std",
+            "raw_roe", "raw_roce", "raw_de", "raw_eps_std",
             "score_within", "score_combined",
         ]])
 
@@ -595,17 +542,14 @@ def compute_long_short_returns(
         if not long_rets or not short_rets:
             continue
 
-        long_ret  = np.mean(long_rets)
-        short_ret = np.mean(short_rets)
-
         records.append({
-            "date"         : date,
-            "quality_return": long_ret - short_ret,
-            "long_return"  : long_ret,
-            "short_return" : short_ret,
-            "long_count"   : len(long_rets),
-            "short_count"  : len(short_rets),
-            "universe_size": len(month_df),
+            "date"          : date,
+            "quality_return": np.mean(long_rets) - np.mean(short_rets),
+            "long_return"   : np.mean(long_rets),
+            "short_return"  : np.mean(short_rets),
+            "long_count"    : len(long_rets),
+            "short_count"   : len(short_rets),
+            "universe_size" : len(month_df),
         })
 
     df = pd.DataFrame(records)
@@ -619,7 +563,7 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    ret_col  = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
     r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
@@ -642,12 +586,13 @@ def main():
     sym_map = load_symbol_map()
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("Loading daily prices and volume ...")
-    daily_prices = pd.read_parquet(PRICE_FILE)
-    daily_prices.index = pd.to_datetime(daily_prices.index)
-    daily_volume = pd.read_parquet(VOLUME_FILE)
-    daily_volume.index = pd.to_datetime(daily_volume.index)
-    print(f"  Daily prices shape: {daily_prices.shape}")
+    print("Loading daily prices (long format) ...")
+    prices_long = load_prices_long(PRICE_FILE)
+    print(f"  Prices shape: {prices_long.shape}")
+
+    print("Building monthly close prices ...")
+    monthly_px = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_px.shape}")
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
@@ -657,7 +602,7 @@ def main():
     fund_df = load_fundamentals()
     print(f"  {len(fund_df)} rows after preparation")
     print(f"  Annualised rows: {(fund_df['ann_method'] != 'Mar_actual').sum()}")
-    dropped = fund_df[fund_df['ann_method'] == 'DROPPED']
+    dropped = fund_df[fund_df["ann_method"] == "DROPPED"]
     print(f"  Dropped (no quarterly data): {len(dropped)} rows")
     if len(dropped) > 0:
         print(f"  Dropped tickers: {dropped['nse_ticker'].unique().tolist()}")
@@ -672,17 +617,14 @@ def main():
     eps_history = build_eps_history(fund_df)
     print(f"  {len(eps_history)} tickers with valid EPS history")
 
-    # Build available_from lookup per ticker per fy_end
     print("Building available_from lookup ...")
     available_from_map = {}
     for ticker, grp in fund_df.groupby("nse_ticker"):
-        available_from_map[ticker] = dict(
-            zip(grp["fy_end"], grp["available_from"])
-        )
+        available_from_map[ticker] = dict(zip(grp["fy_end"], grp["available_from"]))
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     results = run_backtest(
-        daily_prices, daily_volume, universe_df, fund_df,
+        prices_long, monthly_px, universe_df, fund_df,
         sector_map, eps_history, available_from_map, sym_map
     )
 
@@ -690,9 +632,6 @@ def main():
         print("ERROR: no results produced")
         return
 
-    # ---------------------------------------------------------------------------
-    # Summary
-    # ---------------------------------------------------------------------------
     n_months      = results["date"].nunique()
     n_tickers     = results["nse_ticker"].nunique()
     avg_per_month = results.groupby("date").size().mean()
@@ -707,6 +646,7 @@ def main():
     print(f"  Financial rows       : {fin_pct:.1f}%")
     print(f"\n  Raw signal null rates:")
     print(f"    raw_roe     : {results['raw_roe'].isna().mean()*100:.1f}%")
+    print(f"    raw_roce    : {results['raw_roce'].isna().mean()*100:.1f}%  (non-fins only)")
     print(f"    raw_de      : {results['raw_de'].isna().mean()*100:.1f}%")
     print(f"    raw_eps_std : {results['raw_eps_std'].isna().mean()*100:.1f}%")
     print(f"\n  score_within  : mean={results['score_within'].mean():.4f}  "
@@ -720,13 +660,13 @@ def main():
 
     last_date  = results["date"].max()
     last_month = results[results["date"] == last_date].copy()
+    ranked     = last_month.sort_values("score_combined", ascending=False)
 
-    ranked = last_month.sort_values("score_combined", ascending=False)
     print(f"\n  Top 10 Quality ({last_date.strftime('%Y-%m')}):")
-    print(ranked[["nse_ticker","is_financial","raw_roe","raw_de",
+    print(ranked[["nse_ticker","is_financial","raw_roe","raw_roce","raw_de",
                   "raw_eps_std","score_combined"]].head(10).to_string(index=False))
     print(f"\n  Bottom 10 Quality ({last_date.strftime('%Y-%m')}):")
-    print(ranked[["nse_ticker","is_financial","raw_roe","raw_de",
+    print(ranked[["nse_ticker","is_financial","raw_roe","raw_roce","raw_de",
                   "raw_eps_std","score_combined"]].tail(10).to_string(index=False))
 
     print(f"\n  Stocks per month (first 5 and last 5):")
@@ -736,15 +676,8 @@ def main():
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
 
-    # ---------------------------------------------------------------------------
-    # Compute and save long-short return series
-    # ---------------------------------------------------------------------------
     print("\nComputing long-short return series ...")
-    monthly_px = daily_prices.resample("ME").last()
-
-    quality_returns = compute_long_short_returns(
-        results, "score_combined", monthly_px, sym_map
-    )
+    quality_returns = compute_long_short_returns(results, "score_combined", monthly_px, sym_map)
     print_return_stats(quality_returns, "QUALITY")
     quality_returns.to_parquet(OUTPUT_RET)
     print(f"  Saved -> {OUTPUT_RET}")

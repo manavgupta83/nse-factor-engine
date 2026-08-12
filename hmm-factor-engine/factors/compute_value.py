@@ -44,7 +44,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe
+from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -56,7 +56,6 @@ DATA_DIR        = BASE_DIR / "data"
 FACTORS_DIR     = Path(__file__).parent / "data"
 
 PRICE_FILE      = DATA_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE     = DATA_DIR / "prices_hmm_daily_volume.parquet"
 FUND_FILE       = DATA_DIR / "fundamentals_annual.parquet"
 SECTOR_FILE     = DATA_DIR / "ticker_to_sector.csv"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
@@ -128,16 +127,6 @@ def zscore(s: pd.Series) -> pd.Series:
 # Annualise P&L fields for current incomplete fiscal year
 # ---------------------------------------------------------------------------
 def annualise_current_year(grp: pd.DataFrame) -> pd.DataFrame:
-    """
-    For the most recent incomplete fiscal year (non-March latest row),
-    annualise net_profit and sales using available quarterly rows.
-
-    Standalone quarterly logic:
-        Jun  → Q1 * 4
-        Sep  → (Sep + Jun) * 2    fallback: Sep * 2
-        Dec  → (Dec+Sep+Jun)*4/3  fallback: (Dec+Jun)*4/3 or Dec*4/3
-        Mar  → full year, no scaling
-    """
     grp    = grp.copy().sort_values("fy_end").reset_index(drop=True)
     latest = grp.iloc[-1]
 
@@ -193,15 +182,12 @@ def load_fundamentals() -> pd.DataFrame:
     df["fy_month"] = df["fy_end"].dt.month
     df             = df.sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
 
-    # Forward fill B/S fields within ticker
     for col in ["book_equity", "shares_cr", "total_debt"]:
         df[col] = df.groupby("nse_ticker")[col].ffill()
 
-    # Initialise annualised fields
     df["net_profit_ann"] = df["net_profit"]
     df["sales_ann"]      = df["sales"]
 
-    # Apply annualisation for tickers with non-March latest row
     results = []
     for ticker, grp in df.groupby("nse_ticker"):
         if grp.iloc[-1]["fy_month"] != 3:
@@ -209,8 +195,6 @@ def load_fundamentals() -> pd.DataFrame:
         results.append(grp)
 
     df = pd.concat(results, ignore_index=True)
-
-    # 90-day filing lag
     df["available_from"] = df["fy_end"] + pd.Timedelta(days=90)
 
     return df
@@ -227,13 +211,6 @@ def get_signals_at_date(
     monthly_px: pd.DataFrame,
     sym_map   : dict,
 ) -> pd.DataFrame:
-    """
-    For each ticker in universe:
-    - Get latest fundamental row with book_equity not null, available_from <= date
-    - Get month-end price
-    - Compute E/P, B/P, S/P
-    """
-    # Filter to rows with book_equity available at date T
     avail  = fund_df[
         (fund_df["available_from"] <= date) &
         (fund_df["book_equity"].notna())
@@ -258,11 +235,9 @@ def get_signals_at_date(
         be     = row["book_equity"]
         sc     = row["shares_cr"]
 
-        # Need book_equity and shares_cr for market cap
         if pd.isna(be) or pd.isna(sc) or sc <= 0:
             continue
 
-        # Get month-end price
         col = sym_map.get(ticker, ticker)
         if col not in monthly_px.columns:
             continue
@@ -272,29 +247,20 @@ def get_signals_at_date(
         if pd.isna(price) or price <= 0:
             continue
 
-        # Market cap in Cr
-        market_cap = price * sc * 1e7 / 1e7  # price * shares = Rs, /1e7 = Cr
-        # Simplified: market_cap_cr = price * sc * 1e7 / 1e7 = price * sc
         market_cap_cr = price * sc
 
         if market_cap_cr <= 0:
             continue
 
-        # E/P — earnings yield
         np_ann = row["net_profit_ann"]
         raw_ep = (np_ann / market_cap_cr) if pd.notna(np_ann) else np.nan
-
-        # B/P — book yield
         raw_bp = be / market_cap_cr
-
-        # S/P — sales yield (null for financials)
         if not is_fin:
             s_ann  = row["sales_ann"]
             raw_sp = (s_ann / market_cap_cr) if pd.notna(s_ann) else np.nan
         else:
             raw_sp = np.nan
 
-        # Need at least E/P and B/P
         if pd.isna(raw_ep) and pd.isna(raw_bp):
             continue
 
@@ -313,19 +279,11 @@ def get_signals_at_date(
 # Cross-sectional scoring
 # ---------------------------------------------------------------------------
 def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
-    """
-    Non-fins: Value = Z(E/P)/3 + Z(B/P)/3 + Z(S/P)/3
-    Fins    : Value = Z(E/P)/2 + Z(B/P)/2
-    Proportional reweighting when component is missing.
-    score_within  : z-scored cross-sectionally across all tickers
-    score_combined: score_within re-z-scored
-    """
     if signals.empty:
         return signals
 
     result = signals.copy().reset_index(drop=True)
 
-    # Winsorise and z-score each component cross-sectionally (all tickers)
     for col, z_col in [("raw_ep", "z_ep"), ("raw_bp", "z_bp"), ("raw_sp", "z_sp")]:
         valid = result[col].dropna()
         if len(valid) >= 5:
@@ -335,45 +293,32 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
         else:
             result[z_col] = np.nan
 
-    # Composite score with proportional reweighting
     result["score_within"] = np.nan
     for idx, row in result.iterrows():
-        is_fin    = row["is_financial"]
-        z_ep      = row.get("z_ep", np.nan)
-        z_bp      = row.get("z_bp", np.nan)
-        z_sp      = row.get("z_sp", np.nan)
-        have_ep   = pd.notna(z_ep)
-        have_bp   = pd.notna(z_bp)
-        have_sp   = pd.notna(z_sp)
+        is_fin  = row["is_financial"]
+        z_ep    = row.get("z_ep", np.nan)
+        z_bp    = row.get("z_bp", np.nan)
+        z_sp    = row.get("z_sp", np.nan)
+        have_ep = pd.notna(z_ep)
+        have_bp = pd.notna(z_bp)
+        have_sp = pd.notna(z_sp)
 
         if is_fin:
-            if have_ep and have_bp:
-                s = 0.5*z_ep + 0.5*z_bp
-            elif have_ep:
-                s = z_ep
-            elif have_bp:
-                s = z_bp
-            else:
-                s = np.nan
+            if have_ep and have_bp:   s = 0.5*z_ep + 0.5*z_bp
+            elif have_ep:             s = z_ep
+            elif have_bp:             s = z_bp
+            else:                     s = np.nan
         else:
-            if have_ep and have_bp and have_sp:
-                s = z_ep/3 + z_bp/3 + z_sp/3
-            elif have_ep and have_bp:
-                s = 0.5*z_ep + 0.5*z_bp
-            elif have_ep and have_sp:
-                s = 0.5*z_ep + 0.5*z_sp
-            elif have_bp and have_sp:
-                s = 0.5*z_bp + 0.5*z_sp
-            elif have_ep:
-                s = z_ep
-            elif have_bp:
-                s = z_bp
-            else:
-                s = np.nan
+            if have_ep and have_bp and have_sp:   s = z_ep/3 + z_bp/3 + z_sp/3
+            elif have_ep and have_bp:             s = 0.5*z_ep + 0.5*z_bp
+            elif have_ep and have_sp:             s = 0.5*z_ep + 0.5*z_sp
+            elif have_bp and have_sp:             s = 0.5*z_bp + 0.5*z_sp
+            elif have_ep:                         s = z_ep
+            elif have_bp:                         s = z_bp
+            else:                                 s = np.nan
 
         result.loc[idx, "score_within"] = s
 
-    # Re-z-score combined
     valid = result["score_within"].dropna()
     if len(valid) >= 5:
         result["score_combined"] = zscore(result["score_within"])
@@ -387,8 +332,8 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
 # Backtest loop
 # ---------------------------------------------------------------------------
 def run_backtest(
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
+    prices_long : pd.DataFrame,
+    monthly_px  : pd.DataFrame,
     universe_df : pd.DataFrame,
     fund_df     : pd.DataFrame,
     sector_map  : pd.DataFrame,
@@ -397,19 +342,15 @@ def run_backtest(
 
     periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
-    monthly_px  = daily_prices.resample("ME").last()
     valid_dates = [d for d in dates if d in monthly_px.index]
 
     all_records = []
 
     for date in valid_dates:
-        universe = get_clean_universe(
-            date, daily_prices, daily_volume, universe_df, sym_map
-        )
+        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
         if not universe:
             continue
 
-        # Exclude known broken tickers
         universe = [t for t in universe if t not in EXCLUDE_TICKERS]
 
         signals = get_signals_at_date(
@@ -487,14 +428,11 @@ def compute_long_short_returns(
         if not long_rets or not short_rets:
             continue
 
-        long_ret  = np.mean(long_rets)
-        short_ret = np.mean(short_rets)
-
         records.append({
             "date"         : date,
-            "value_return": long_ret - short_ret,
-            "long_return"  : long_ret,
-            "short_return" : short_ret,
+            "value_return" : np.mean(long_rets) - np.mean(short_rets),
+            "long_return"  : np.mean(long_rets),
+            "short_return" : np.mean(short_rets),
             "long_count"   : len(long_rets),
             "short_count"  : len(short_rets),
             "universe_size": len(month_df),
@@ -511,7 +449,7 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    ret_col  = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
     r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
@@ -534,12 +472,13 @@ def main():
     sym_map = load_symbol_map()
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("Loading daily prices and volume ...")
-    daily_prices = pd.read_parquet(PRICE_FILE)
-    daily_prices.index = pd.to_datetime(daily_prices.index)
-    daily_volume = pd.read_parquet(VOLUME_FILE)
-    daily_volume.index = pd.to_datetime(daily_volume.index)
-    print(f"  Daily prices shape: {daily_prices.shape}")
+    print("Loading daily prices (long format) ...")
+    prices_long = load_prices_long(PRICE_FILE)
+    print(f"  Prices shape: {prices_long.shape}")
+
+    print("Building monthly close prices ...")
+    monthly_px = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_px.shape}")
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
@@ -557,16 +496,13 @@ def main():
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     results = run_backtest(
-        daily_prices, daily_volume, universe_df, fund_df, sector_map, sym_map
+        prices_long, monthly_px, universe_df, fund_df, sector_map, sym_map
     )
 
     if results.empty:
         print("ERROR: no results produced")
         return
 
-    # ---------------------------------------------------------------------------
-    # Summary
-    # ---------------------------------------------------------------------------
     n_months      = results["date"].nunique()
     n_tickers     = results["nse_ticker"].nunique()
     avg_per_month = results.groupby("date").size().mean()
@@ -610,13 +546,8 @@ def main():
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
 
-    # Compute and save long-short return series
     print("\nComputing long-short return series ...")
-    monthly_px = daily_prices.resample("ME").last()
-
-    value_returns = compute_long_short_returns(
-        results, "score_combined", monthly_px, sym_map
-    )
+    value_returns = compute_long_short_returns(results, "score_combined", monthly_px, sym_map)
     print_return_stats(value_returns, "VALUE")
     value_returns.to_parquet(OUTPUT_RET)
     print(f"  Saved -> {OUTPUT_RET}")

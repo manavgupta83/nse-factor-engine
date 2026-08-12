@@ -3,12 +3,14 @@ compute_rmw.py
 ==============
 RMW — Robust Minus Weak (Profitability) Factor
 
-Two signals computed in parallel:
+Three signals computed in parallel:
   roe    : net_profit / book_equity          (universal — all tickers)
   op_roe : operating_profit / book_equity    (non-fins)
            ppop / book_equity                (financials)
+  roce   : operating_profit / (book_equity + total_debt)  (non-fins only)
+           ROE used for financials (ROCE not meaningful for banks/NBFCs)
 
-Z-scoring (both signals):
+Z-scoring (all signals):
   score_within   : z-scored within fin/non-fin group separately, then concatenated
   score_combined : score_within re-z-scored across all tickers
 
@@ -16,9 +18,9 @@ Output
 ------
 hmm-factor-engine/data/factor_rmw.parquet
   Columns: nse_ticker, date, is_financial,
-           raw_roe, raw_op_roe,
-           score_within_roe, score_within_op_roe,
-           score_combined_roe, score_combined_op_roe
+           raw_roe, raw_op_roe, raw_roce,
+           score_within_roe, score_within_op_roe, score_within_roce,
+           score_combined_roe, score_combined_op_roe, score_combined_roce
 
 Usage
 -----
@@ -34,7 +36,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe
+from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -46,7 +48,6 @@ DATA_DIR        = BASE_DIR / "data"
 FACTORS_DIR     = Path(__file__).parent / "data"
 
 PRICE_FILE      = DATA_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE     = DATA_DIR / "prices_hmm_daily_volume.parquet"
 FUND_FILE       = DATA_DIR / "fundamentals_annual.parquet"
 SECTOR_FILE     = DATA_DIR / "ticker_to_sector.csv"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
@@ -55,6 +56,7 @@ CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_histo
 OUTPUT_FILE         = FACTORS_DIR / "factor_rmw.parquet"
 OUTPUT_ROE_RET      = FACTORS_DIR / "rmw_roe_returns.parquet"
 OUTPUT_OP_ROE_RET   = FACTORS_DIR / "rmw_op_roe_returns.parquet"
+OUTPUT_ROCE_RET     = FACTORS_DIR / "rmw_roce_returns.parquet"
 
 LONG_PCTILE  = 0.90
 SHORT_PCTILE = 0.10
@@ -89,10 +91,10 @@ def parse_fiscal_year_end(fy_str: str) -> pd.Timestamp:
 
 def load_fundamentals() -> pd.DataFrame:
     df = pd.read_parquet(FUND_FILE)
-    df["fy_end"]        = df["fiscal_year"].apply(parse_fiscal_year_end)
-    df                  = df[df["fy_end"].notna()].copy()
-    df["available_from"]= df["fy_end"] + pd.Timedelta(days=90)
-    df                  = df.sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
+    df["fy_end"]         = df["fiscal_year"].apply(parse_fiscal_year_end)
+    df                   = df[df["fy_end"].notna()].copy()
+    df["available_from"] = df["fy_end"] + pd.Timedelta(days=90)
+    df                   = df.sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
     return df
 
 
@@ -135,7 +137,9 @@ def get_signals_at_date(
 ) -> pd.DataFrame:
     """
     For each ticker in universe, find the most recent fundamental row
-    where available_from <= date. Return raw_roe and raw_op_roe.
+    where available_from <= date. Return raw_roe, raw_op_roe, and raw_roce.
+    raw_roce is computed for non-financials only (operating_profit / (book_equity + total_debt)).
+    Financials get raw_roce = NaN (ROE is the appropriate signal for them).
     """
     avail  = fund_df[fund_df["available_from"] <= date]
     latest = (
@@ -173,8 +177,20 @@ def get_signals_at_date(
             op = row.get("operating_profit", np.nan)
         raw_op_roe = (op / be) if pd.notna(op) else np.nan
 
-        # Skip if both signals are null
-        if pd.isna(raw_roe) and pd.isna(raw_op_roe):
+        # ROCE — non-financials only
+        if is_fin:
+            raw_roce = np.nan
+        else:
+            td = row.get("total_debt", np.nan)
+            td = 0.0 if pd.isna(td) else td
+            ce = be + td
+            if ce == 0:
+                raw_roce = np.nan
+            else:
+                raw_roce = (op / ce) if pd.notna(op) else np.nan
+
+        # Skip if all three signals are null
+        if pd.isna(raw_roe) and pd.isna(raw_op_roe) and pd.isna(raw_roce):
             continue
 
         rows.append({
@@ -182,6 +198,7 @@ def get_signals_at_date(
             "is_financial": is_fin,
             "raw_roe"     : raw_roe,
             "raw_op_roe"  : raw_op_roe,
+            "raw_roce"    : raw_roce,
         })
 
     return pd.DataFrame(rows)
@@ -191,16 +208,11 @@ def get_signals_at_date(
 # Cross-sectional scoring — applied to one signal at a time
 # ---------------------------------------------------------------------------
 def compute_scores_for_signal(
-    df         : pd.DataFrame,
-    raw_col    : str,
-    within_col : str,
+    df          : pd.DataFrame,
+    raw_col     : str,
+    within_col  : str,
     combined_col: str,
 ) -> pd.DataFrame:
-    """
-    For a given raw signal column:
-    1. Winsorise + z-score within fin/non-fin group → within_col
-    2. Re-z-score combined → combined_col
-    """
     df[within_col]   = np.nan
     df[combined_col] = np.nan
 
@@ -213,7 +225,6 @@ def compute_scores_for_signal(
         z = zscore(w)
         df.loc[grp.index, within_col] = z.values
 
-    # Re-z-score across all tickers
     valid = df[within_col].dropna()
     if len(valid) >= 5:
         df[combined_col] = zscore(df[within_col])
@@ -233,6 +244,9 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
     result = compute_scores_for_signal(
         result, "raw_op_roe", "score_within_op_roe", "score_combined_op_roe"
     )
+    result = compute_scores_for_signal(
+        result, "raw_roce", "score_within_roce", "score_combined_roce"
+    )
 
     return result
 
@@ -241,24 +255,23 @@ def compute_scores(signals: pd.DataFrame) -> pd.DataFrame:
 # Backtest loop
 # ---------------------------------------------------------------------------
 def run_backtest(
-    daily_prices : pd.DataFrame,
-    daily_volume : pd.DataFrame,
-    universe_df  : pd.DataFrame,
-    fund_df      : pd.DataFrame,
-    sector_map   : pd.DataFrame,
-    sym_map      : dict,
+    prices_long : pd.DataFrame,
+    monthly_px  : pd.DataFrame,
+    universe_df : pd.DataFrame,
+    fund_df     : pd.DataFrame,
+    sector_map  : pd.DataFrame,
+    sym_map     : dict,
 ) -> pd.DataFrame:
 
     periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
-    monthly_px  = daily_prices.resample("ME").last()
     valid_dates = [d for d in dates if d in monthly_px.index]
 
     all_records = []
 
     for date in valid_dates:
         universe = get_clean_universe(
-            date, daily_prices, daily_volume, universe_df, sym_map
+            date, prices_long, universe_df, sym_map
         )
         if not universe:
             continue
@@ -268,13 +281,13 @@ def run_backtest(
             print(f"  SKIP {date.strftime('%Y-%m')}: only {len(signals)} stocks with signal")
             continue
 
-        scored       = compute_scores(signals)
+        scored         = compute_scores(signals)
         scored["date"] = date
         all_records.append(scored[[
             "nse_ticker", "date", "is_financial",
-            "raw_roe", "raw_op_roe",
-            "score_within_roe", "score_within_op_roe",
-            "score_combined_roe", "score_combined_op_roe",
+            "raw_roe", "raw_op_roe", "raw_roce",
+            "score_within_roe", "score_within_op_roe", "score_within_roce",
+            "score_combined_roe", "score_combined_op_roe", "score_combined_roce",
         ]])
 
     if not all_records:
@@ -293,11 +306,6 @@ def compute_long_short_returns(
     sym_map    : dict,
     return_col : str = "factor_return",
 ) -> pd.DataFrame:
-    """
-    For each month T in scores_df:
-    - Long top decile by score_col, short bottom decile
-    - Return = avg long return (T+1) - avg short return (T+1)
-    """
     records = []
     dates   = sorted(scores_df["date"].unique())
 
@@ -309,15 +317,14 @@ def compute_long_short_returns(
         if len(month_df) < MIN_STOCKS:
             continue
 
-        long_thresh  = month_df[score_col].quantile(LONG_PCTILE)
-        short_thresh = month_df[score_col].quantile(SHORT_PCTILE)
+        long_thresh   = month_df[score_col].quantile(LONG_PCTILE)
+        short_thresh  = month_df[score_col].quantile(SHORT_PCTILE)
         long_tickers  = month_df[month_df[score_col] >= long_thresh]["nse_ticker"].tolist()
         short_tickers = month_df[month_df[score_col] <= short_thresh]["nse_ticker"].tolist()
 
         if not long_tickers or not short_tickers:
             continue
 
-        # Next month returns
         idx = monthly_px.index
         if date not in idx:
             continue
@@ -344,16 +351,13 @@ def compute_long_short_returns(
         if not long_rets or not short_rets:
             continue
 
-        long_ret   = np.mean(long_rets)
-        short_ret  = np.mean(short_rets)
-
         records.append({
-            "date"         : date,
-            return_col: long_ret - short_ret,
-            "long_return"  : long_ret,
-            "short_return" : short_ret,
-            "long_count"   : len(long_rets),
-            "short_count"  : len(short_rets),
+            "date"        : date,
+            return_col    : np.mean(long_rets) - np.mean(short_rets),
+            "long_return" : np.mean(long_rets),
+            "short_return": np.mean(short_rets),
+            "long_count"  : len(long_rets),
+            "short_count" : len(short_rets),
             "universe_size": len(month_df),
         })
 
@@ -368,8 +372,7 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    # Use first non-date, non-count column as the return column
-    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    ret_col  = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
     r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
@@ -392,12 +395,15 @@ def main():
     sym_map = load_symbol_map()
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("Loading daily prices and volume ...")
-    daily_prices = pd.read_parquet(PRICE_FILE)
-    daily_prices.index = pd.to_datetime(daily_prices.index)
-    daily_volume = pd.read_parquet(VOLUME_FILE)
-    daily_volume.index = pd.to_datetime(daily_volume.index)
-    print(f"  Daily prices shape: {daily_prices.shape}")
+    print("Loading daily prices (long format) ...")
+    prices_long = load_prices_long(PRICE_FILE)
+    print(f"  Prices shape: {prices_long.shape}")
+    print(f"  Symbols     : {prices_long['symbol'].nunique()}")
+    print(f"  Date range  : {prices_long['date'].min().date()} -> {prices_long['date'].max().date()}")
+
+    print("Building monthly close prices ...")
+    monthly_px = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_px.shape}")
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
@@ -419,7 +425,7 @@ def main():
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     results = run_backtest(
-        daily_prices, daily_volume, universe_df, fund_df, sector_map, sym_map
+        prices_long, monthly_px, universe_df, fund_df, sector_map, sym_map
     )
 
     if results.empty:
@@ -443,8 +449,9 @@ def main():
     print(f"  Financial rows       : {fin_pct:.1f}%")
 
     for sig, raw_col, within_col, combined_col in [
-        ("ROE    (net_profit/BE)  ", "raw_roe",    "score_within_roe",    "score_combined_roe"),
-        ("op_ROE (op_profit/BE)   ", "raw_op_roe", "score_within_op_roe", "score_combined_op_roe"),
+        ("ROE    (net_profit/BE)          ", "raw_roe",    "score_within_roe",    "score_combined_roe"),
+        ("op_ROE (op_profit/BE)           ", "raw_op_roe", "score_within_op_roe", "score_combined_op_roe"),
+        ("ROCE   (op_profit/BE+TD, nonfin)", "raw_roce",   "score_within_roce",   "score_combined_roce"),
     ]:
         print(f"\n  --- {sig} ---")
         print(f"  raw nulls      : {results[raw_col].isna().sum()} "
@@ -458,45 +465,38 @@ def main():
               f"min={results[combined_col].min():.2f}  "
               f"max={results[combined_col].max():.2f}")
 
-    # Top / bottom in most recent month
     last_date  = results["date"].max()
     last_month = results[results["date"] == last_date].copy()
 
     for sig_label, combined_col in [
         ("ROE",    "score_combined_roe"),
         ("op_ROE", "score_combined_op_roe"),
+        ("ROCE",   "score_combined_roce"),
     ]:
         ranked = last_month.sort_values(combined_col, ascending=False)
         print(f"\n  Top 10 by {sig_label} ({last_date.strftime('%Y-%m')}):")
-        print(ranked[["nse_ticker", "is_financial", "raw_roe", "raw_op_roe",
+        print(ranked[["nse_ticker", "is_financial", "raw_roe", "raw_op_roe", "raw_roce",
                        combined_col]].head(10).to_string(index=False))
         print(f"\n  Bottom 10 by {sig_label} ({last_date.strftime('%Y-%m')}):")
-        print(ranked[["nse_ticker", "is_financial", "raw_roe", "raw_op_roe",
+        print(ranked[["nse_ticker", "is_financial", "raw_roe", "raw_op_roe", "raw_roce",
                        combined_col]].tail(10).to_string(index=False))
 
-    # Monthly stock count
     print(f"\n  Stocks per month (first 5 and last 5):")
     monthly_counts = results.groupby("date").size()
     print(pd.concat([monthly_counts.head(5), monthly_counts.tail(5)]).to_string())
 
-    # Correlation between the two signals
-    both_valid = results[["raw_roe", "raw_op_roe"]].dropna()
-    corr = both_valid.corr().loc["raw_roe", "raw_op_roe"]
-    print(f"\n  Correlation raw_roe vs raw_op_roe: {corr:.4f}")
+    both_valid = results[["raw_roe", "raw_op_roe", "raw_roce"]].dropna()
+    print(f"\n  Signal correlations (rows with all 3 non-null: {len(both_valid)}):")
+    print(both_valid.corr().round(4).to_string())
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
 
-    # ---------------------------------------------------------------------------
-    # Compute and save long-short return series
-    # ---------------------------------------------------------------------------
     print("\nComputing long-short return series ...")
-    monthly_px = daily_prices.resample("ME").last()
 
     print("  ROE signal ...")
     roe_returns = compute_long_short_returns(
-        results, "score_combined_roe", monthly_px, sym_map,
-        return_col="rmw_roe_return"
+        results, "score_combined_roe", monthly_px, sym_map, return_col="rmw_roe_return"
     )
     print_return_stats(roe_returns, "RMW_ROE")
     roe_returns.to_parquet(OUTPUT_ROE_RET)
@@ -504,12 +504,19 @@ def main():
 
     print("  op_ROE signal ...")
     op_roe_returns = compute_long_short_returns(
-        results, "score_combined_op_roe", monthly_px, sym_map,
-        return_col="rmw_op_roe_return"
+        results, "score_combined_op_roe", monthly_px, sym_map, return_col="rmw_op_roe_return"
     )
     print_return_stats(op_roe_returns, "RMW_OP_ROE")
     op_roe_returns.to_parquet(OUTPUT_OP_ROE_RET)
     print(f"  Saved -> {OUTPUT_OP_ROE_RET}")
+
+    print("  ROCE signal ...")
+    roce_returns = compute_long_short_returns(
+        results, "score_combined_roce", monthly_px, sym_map, return_col="rmw_roce_return"
+    )
+    print_return_stats(roce_returns, "RMW_ROCE")
+    roce_returns.to_parquet(OUTPUT_ROCE_RET)
+    print(f"  Saved -> {OUTPUT_ROCE_RET}")
 
     print("Done.")
 

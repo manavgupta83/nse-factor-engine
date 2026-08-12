@@ -26,6 +26,8 @@ Output
 ------
   hmm-factor-engine/data/prices_hmm_daily.parquet
     Long format: symbol | date | open | high | low | close | volume
+  hmm-factor-engine/data/prices_hmm_daily_volume.parquet
+    Wide format: date (index) x symbol (columns), values = daily volume
   hmm-factor-engine/data/shares_outstanding.parquet
     symbol | shares_outstanding
   hmm-factor-engine/data/corporate_action_flags.parquet
@@ -48,7 +50,7 @@ import yfinance as yf
 # Config
 # ---------------------------------------------------------------------------
 BASE             = Path("/home/ec2-user/nse-factor-engine")
-WINDOW_MONTHS    = 30
+WINDOW_MONTHS    = 240
 BATCH_SIZE       = 20
 SLEEP_BETWEEN    = 2
 RETRY_SLEEP      = 5
@@ -65,6 +67,7 @@ UNIVERSE_FILES = [
 
 OUTPUT_DIR   = Path(__file__).parent
 PRICE_FILE   = OUTPUT_DIR / "prices_hmm_daily.parquet"
+VOLUME_FILE  = OUTPUT_DIR / "prices_hmm_daily_volume.parquet"
 SHARES_FILE  = OUTPUT_DIR / "shares_outstanding.parquet"
 FLAGS_FILE   = OUTPUT_DIR / "corporate_action_flags.parquet"
 
@@ -192,6 +195,22 @@ def fetch_shares_outstanding(symbols: list[str]) -> pd.DataFrame:
             print(f"  {sym}: ERROR — {e}")
         time.sleep(0.3)
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — Build and save wide volume parquet from long price dataframe
+# ---------------------------------------------------------------------------
+def save_volume_parquet(combined: pd.DataFrame) -> None:
+    volume = (
+        combined[["symbol", "date", "volume"]]
+        .pivot(index="date", columns="symbol", values="volume")
+    )
+    volume.index.name  = None
+    volume.columns.name = None
+    volume.to_parquet(VOLUME_FILE)
+    print(f"  Saved volume : {volume.shape} -> {VOLUME_FILE.name}")
+    print(f"  Date range   : {volume.index.min().date()} -> {volume.index.max().date()}")
+    print(f"  Tickers      : {volume.shape[1]}")
 
 
 # ---------------------------------------------------------------------------
@@ -358,9 +377,13 @@ def main():
             print(f"  Dropped {dropped} rows older than {WINDOW_START_STR}")
 
         combined.to_parquet(PRICE_FILE, index=False)
-        print(f"  Saved prices: {combined.shape} -> {PRICE_FILE.name}")
-        print(f"  Date range  : {combined['date'].min().date()} -> {combined['date'].max().date()}")
-        print(f"  Symbols     : {combined['symbol'].nunique()}")
+        print(f"  Saved prices : {combined.shape} -> {PRICE_FILE.name}")
+        print(f"  Date range   : {combined['date'].min().date()} -> {combined['date'].max().date()}")
+        print(f"  Symbols      : {combined['symbol'].nunique()}")
+
+        # Save wide volume parquet in sync with price parquet
+        save_volume_parquet(combined)
+
     else:
         print("  No new price data fetched.")
 

@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe
+from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -41,7 +41,6 @@ DATA_DIR        = BASE_DIR / "data"
 FACTORS_DIR     = Path(__file__).parent / "data"
 
 PRICE_FILE      = DATA_DIR / "prices_hmm_daily.parquet"
-VOLUME_FILE     = DATA_DIR / "prices_hmm_daily_volume.parquet"
 FUND_FILE       = DATA_DIR / "fundamentals_annual.parquet"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_history/"
@@ -93,16 +92,7 @@ def zscore(s: pd.Series) -> pd.Series:
     return (s - mu) / sigma
 
 
-# ---------------------------------------------------------------------------
-# Load shares_cr — forward filled within ticker, with 90-day lag
-# ---------------------------------------------------------------------------
 def load_shares(fund_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Returns a long-format DataFrame:
-        nse_ticker | fy_end | shares_cr | available_from
-    With shares_cr forward-filled within ticker.
-    Only rows where shares_cr is not null after ffill.
-    """
     df = fund_df.copy()
     df["shares_cr"]      = df.groupby("nse_ticker")["shares_cr"].ffill()
     df["available_from"] = df["fy_end"] + pd.Timedelta(days=90)
@@ -120,12 +110,6 @@ def get_signals_at_date(
     monthly_px: pd.DataFrame,
     sym_map   : dict,
 ) -> pd.DataFrame:
-    """
-    For each ticker in universe:
-    - Get latest shares_cr available as of date T (90-day lag)
-    - Get month-end price
-    - Compute market_cap and size_raw = -log(market_cap)
-    """
     avail  = shares_df[shares_df["available_from"] <= date]
     latest = (
         avail[avail["nse_ticker"].isin(universe)]
@@ -145,7 +129,6 @@ def get_signals_at_date(
         if pd.isna(sc) or sc <= 0:
             continue
 
-        # Get month-end price
         col = sym_map.get(ticker, ticker)
         if col not in monthly_px.columns:
             continue
@@ -155,16 +138,13 @@ def get_signals_at_date(
         if pd.isna(price) or price <= 0:
             continue
 
-        # Market cap in Rs
         market_cap = price * sc * 1e7
         if market_cap <= 0:
             continue
 
-        size_raw = -np.log(market_cap)
-
         rows.append({
             "nse_ticker": ticker,
-            "raw"       : size_raw,
+            "raw"       : -np.log(market_cap),
             "market_cap": market_cap,
         })
 
@@ -175,8 +155,8 @@ def get_signals_at_date(
 # Backtest loop
 # ---------------------------------------------------------------------------
 def run_backtest(
-    daily_prices: pd.DataFrame,
-    daily_volume: pd.DataFrame,
+    prices_long : pd.DataFrame,
+    monthly_px  : pd.DataFrame,
     universe_df : pd.DataFrame,
     shares_df   : pd.DataFrame,
     sym_map     : dict,
@@ -184,28 +164,22 @@ def run_backtest(
 
     periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
-    monthly_px  = daily_prices.resample("ME").last()
     valid_dates = [d for d in dates if d in monthly_px.index]
 
     all_records = []
 
     for date in valid_dates:
-        universe = get_clean_universe(
-            date, daily_prices, daily_volume, universe_df, sym_map
-        )
+        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
         if not universe:
             continue
 
         universe = [t for t in universe if t not in EXCLUDE_TICKERS]
 
-        signals = get_signals_at_date(
-            date, universe, shares_df, monthly_px, sym_map
-        )
+        signals = get_signals_at_date(date, universe, shares_df, monthly_px, sym_map)
         if signals.empty or len(signals) < 10:
             print(f"  SKIP {date.strftime('%Y-%m')}: only {len(signals)} stocks with signal")
             continue
 
-        # Cross-sectional z-score
         signals["score"] = zscore(signals["raw"])
         signals["date"]  = date
 
@@ -271,14 +245,11 @@ def compute_long_short_returns(
         if not long_rets or not short_rets:
             continue
 
-        long_ret  = np.mean(long_rets)
-        short_ret = np.mean(short_rets)
-
         records.append({
             "date"         : date,
-            "size_return": long_ret - short_ret,
-            "long_return"  : long_ret,
-            "short_return" : short_ret,
+            "size_return"  : np.mean(long_rets) - np.mean(short_rets),
+            "long_return"  : np.mean(long_rets),
+            "short_return" : np.mean(short_rets),
             "long_count"   : len(long_rets),
             "short_count"  : len(short_rets),
             "universe_size": len(month_df),
@@ -295,7 +266,7 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    ret_col = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    ret_col  = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
     r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
@@ -318,12 +289,13 @@ def main():
     sym_map = load_symbol_map()
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("Loading daily prices and volume ...")
-    daily_prices = pd.read_parquet(PRICE_FILE)
-    daily_prices.index = pd.to_datetime(daily_prices.index)
-    daily_volume = pd.read_parquet(VOLUME_FILE)
-    daily_volume.index = pd.to_datetime(daily_volume.index)
-    print(f"  Daily prices shape: {daily_prices.shape}")
+    print("Loading daily prices (long format) ...")
+    prices_long = load_prices_long(PRICE_FILE)
+    print(f"  Prices shape: {prices_long.shape}")
+
+    print("Building monthly close prices ...")
+    monthly_px = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_px.shape}")
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
@@ -339,22 +311,15 @@ def main():
     print(f"  {shares_df['nse_ticker'].nunique()} tickers with shares_cr data")
 
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    results = run_backtest(
-        daily_prices, daily_volume, universe_df, shares_df, sym_map
-    )
+    results = run_backtest(prices_long, monthly_px, universe_df, shares_df, sym_map)
 
     if results.empty:
         print("ERROR: no results produced")
         return
 
-    # ---------------------------------------------------------------------------
-    # Summary
-    # ---------------------------------------------------------------------------
     n_months      = results["date"].nunique()
     n_tickers     = results["nse_ticker"].nunique()
     avg_per_month = results.groupby("date").size().mean()
-
-    # Market cap stats in Cr
     results["mcap_cr"] = results["market_cap"] / 1e7
 
     print(f"\n{'='*60}")
@@ -370,16 +335,13 @@ def main():
           f"max={results['score'].max():.2f}")
 
     last_date  = results["date"].max()
-    last_month = results[results["date"] == last_date].sort_values(
-        "score", ascending=False
-    )
+    last_month = results[results["date"] == last_date].sort_values("score", ascending=False)
 
     print(f"\n  Top 10 Size scores ({last_date.strftime('%Y-%m')}) — smallest caps:")
     print(last_month[["nse_ticker","mcap_cr","raw","score"]].head(10).to_string(index=False))
     print(f"\n  Bottom 10 Size scores ({last_date.strftime('%Y-%m')}) — largest caps:")
     print(last_month[["nse_ticker","mcap_cr","raw","score"]].tail(10).to_string(index=False))
 
-    # Market cap distribution in last month
     print(f"\n  Market cap distribution in {last_date.strftime('%Y-%m')} (Cr):")
     print(last_month["mcap_cr"].describe().apply(lambda x: f"{x:,.0f}").to_string())
 
@@ -387,17 +349,12 @@ def main():
     monthly_counts = results.groupby("date").size()
     print(pd.concat([monthly_counts.head(5), monthly_counts.tail(5)]).to_string())
 
-    # Drop market_cap helper column before saving
     results = results.drop(columns=["market_cap"])
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
 
     print("\nComputing long-short return series ...")
-    monthly_px = daily_prices.resample("ME").last()
-
-    size_returns = compute_long_short_returns(
-        results, "score", monthly_px, sym_map
-    )
+    size_returns = compute_long_short_returns(results, "score", monthly_px, sym_map)
     print_return_stats(size_returns, "SIZE")
     size_returns.to_parquet(OUTPUT_RET)
     print(f"  Saved -> {OUTPUT_RET}")
