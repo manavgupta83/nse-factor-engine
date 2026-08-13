@@ -3,117 +3,117 @@
   "all_methods": {
     "erc": {
       "Bull": {
-        "mom": 0.2187,
-        "bab": 0.235,
-        "rmw_roe": 0.2256,
-        "value": 0.1799,
-        "size": 0.1408
+        "mom": 0.2028,
+        "bab": 0.2223,
+        "rmw_roe": 0.236,
+        "value": 0.187,
+        "size": 0.1519
       },
       "Choppy": {
-        "mom": 0.1955,
-        "bab": 0.2106,
-        "rmw_roe": 0.23,
-        "value": 0.1939,
-        "size": 0.1701
+        "mom": 0.1905,
+        "bab": 0.1924,
+        "rmw_roe": 0.267,
+        "value": 0.1968,
+        "size": 0.1532
       },
       "Crisis": {
-        "mom": 0.2529,
-        "bab": 0.148,
-        "rmw_roe": 0.2347,
-        "value": 0.1758,
-        "size": 0.1887
+        "mom": 0.0,
+        "bab": 0.3674,
+        "rmw_roe": 0.3418,
+        "value": 0.0,
+        "size": 0.2908
       }
     },
     "sharpe_erc": {
       "Bull": {
-        "mom": 0.3215,
-        "bab": 0.2468,
-        "rmw_roe": 0.1893,
-        "value": 0.1644,
-        "size": 0.0781
+        "mom": 0.2279,
+        "bab": 0.2598,
+        "rmw_roe": 0.2082,
+        "value": 0.1774,
+        "size": 0.1267
       },
       "Choppy": {
-        "mom": 0.2529,
-        "bab": 0.0,
-        "rmw_roe": 0.3489,
-        "value": 0.2004,
-        "size": 0.1978
+        "mom": 0.2434,
+        "bab": 0.0964,
+        "rmw_roe": 0.4078,
+        "value": 0.1692,
+        "size": 0.0832
       },
       "Crisis": {
-        "mom": 0.2182,
-        "bab": 0.1338,
-        "rmw_roe": 0.2846,
-        "value": 0.1222,
-        "size": 0.2412
+        "mom": 0.0,
+        "bab": 0.9262,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 0.0738
       }
     },
     "mvo_sample": {
       "Bull": {
-        "mom": 0.8785,
-        "bab": 0.1215,
+        "mom": 0.3061,
+        "bab": 0.5154,
         "rmw_roe": 0.0,
-        "value": 0.0,
+        "value": 0.1785,
         "size": 0.0
       },
       "Choppy": {
-        "mom": 0.0,
+        "mom": 0.1117,
         "bab": 0.0,
-        "rmw_roe": 1.0,
+        "rmw_roe": 0.8883,
         "value": 0.0,
         "size": 0.0
       },
       "Crisis": {
         "mom": 0.0,
-        "bab": 0.0,
+        "bab": 1.0,
         "rmw_roe": 0.0,
         "value": 0.0,
-        "size": 1.0
+        "size": 0.0
       }
     },
     "mvo_shrink": {
       "Bull": {
-        "mom": 0.8785,
-        "bab": 0.1215,
+        "mom": 0.3061,
+        "bab": 0.5154,
         "rmw_roe": 0.0,
-        "value": 0.0,
+        "value": 0.1785,
         "size": 0.0
       },
       "Choppy": {
-        "mom": 0.0,
+        "mom": 0.1117,
         "bab": 0.0,
-        "rmw_roe": 1.0,
+        "rmw_roe": 0.8883,
         "value": 0.0,
         "size": 0.0
       },
       "Crisis": {
         "mom": 0.0,
-        "bab": 0.0,
+        "bab": 1.0,
         "rmw_roe": 0.0,
         "value": 0.0,
-        "size": 1.0
+        "size": 0.0
       }
     },
     "mixed": {
       "Bull": {
-        "mom": 0.3215,
-        "bab": 0.2468,
-        "rmw_roe": 0.1893,
-        "value": 0.1644,
-        "size": 0.0781
+        "mom": 0.2279,
+        "bab": 0.2598,
+        "rmw_roe": 0.2082,
+        "value": 0.1774,
+        "size": 0.1267
       },
       "Choppy": {
-        "mom": 0.2529,
-        "bab": 0.0,
-        "rmw_roe": 0.3489,
-        "value": 0.2004,
-        "size": 0.1978
+        "mom": 0.2434,
+        "bab": 0.0964,
+        "rmw_roe": 0.4078,
+        "value": 0.1692,
+        "size": 0.0832
       },
       "Crisis": {
-        "mom": 0.2182,
-        "bab": 0.1338,
-        "rmw_roe": 0.2846,
-        "value": 0.1222,
-        "size": 0.2412
+        "mom": 0.0,
+        "bab": 0.9262,
+        "rmw_roe": 0.0,
+        "value": 0.0,
+        "size": 0.0738
       }
     }
   }
