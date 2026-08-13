@@ -1,23 +1,10 @@
 """
 compute_size.py
 ===============
-Size Factor Construction
+Size Factor Construction (vectorized, fast)
 
-Signal:
-    size_raw = -log(market_cap)
-    market_cap = month_end_price * shares_cr * 1e7
-
-Negative log so smaller cap = higher size score.
-Z-scored cross-sectionally each month.
-
-Output
-------
-hmm-factor-engine/data/factor_size.parquet
-    Columns: nse_ticker, date, raw, score
-
-Usage
------
-    python3 hmm-factor-engine/factors/compute_size.py
+Signal  : -log(market_cap)  — smaller cap = higher score
+Date fix: return recorded at t1_end (month return is earned)
 """
 
 import csv
@@ -29,7 +16,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
+from universe import build_universe_lookup, get_pit_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -45,18 +32,32 @@ FUND_FILE       = DATA_DIR / "fundamentals_annual.parquet"
 SYMBOL_MAP_FILE = DATA_DIR / "symbol_map.csv"
 CONSTITUENT_CSV = Path("/home/ec2-user/nse-factor-engine/nifty_constituent_history/"
                        "nifty500_2005-01-01_to_2026-06-30.csv")
-OUTPUT_FILE     = FACTORS_DIR / "factor_size.parquet"
-OUTPUT_RET      = FACTORS_DIR / "size_returns.parquet"
+OUTPUT_FILE = FACTORS_DIR / "factor_size.parquet"
+OUTPUT_RET  = FACTORS_DIR / "size_returns.parquet"
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BACKTEST_START  = "2018-07"
-BACKTEST_END    = "2026-06"
-EXCLUDE_TICKERS = {"ABBOTINDIA", "PFIZER"}
-LONG_PCTILE     = 0.90
-SHORT_PCTILE    = 0.10
-MIN_STOCKS      = 20
+BACKTEST_START   = "2018-07"
+BACKTEST_END     = "2026-06"
+EXCLUDE_TICKERS  = {"ABBOTINDIA", "PFIZER"}
+LONG_PCTILE      = 0.90
+SHORT_PCTILE     = 0.10
+MIN_STOCKS       = 20
+CRORE            = 1e7
+ADTV_DAYS        = 63
+
+ADTV_SCHEDULE = [
+    (pd.Timestamp("2018-01-01"), 10.0),
+    (pd.Timestamp("2022-01-01"), 20.0),
+    (pd.Timestamp("9999-01-01"), 30.0),
+]
+
+def get_adtv_threshold(date: pd.Timestamp) -> float:
+    for cutoff, threshold in ADTV_SCHEDULE:
+        if date < cutoff:
+            return threshold
+    return 30.0
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,16 +93,44 @@ def zscore(s: pd.Series) -> pd.Series:
     return (s - mu) / sigma
 
 
-def load_shares(fund_df: pd.DataFrame) -> pd.DataFrame:
-    df = fund_df.copy()
+def load_shares(fund_file: Path) -> pd.DataFrame:
+    df = pd.read_parquet(fund_file)
+    df["fy_end"] = df["fiscal_year"].apply(parse_fiscal_year_end)
+    df = df[df["fy_end"].notna()].sort_values(["nse_ticker", "fy_end"]).reset_index(drop=True)
     df["shares_cr"]      = df.groupby("nse_ticker")["shares_cr"].ffill()
     df["available_from"] = df["fy_end"] + pd.Timedelta(days=90)
-    df = df[df["shares_cr"].notna()][["nse_ticker","fy_end","shares_cr","available_from"]]
-    return df
+    return df[df["shares_cr"].notna()][["nse_ticker", "fy_end", "shares_cr", "available_from"]]
 
 
 # ---------------------------------------------------------------------------
-# Get signals at date T
+# Fast vectorized ADTV
+# ---------------------------------------------------------------------------
+def build_adtv_matrix(prices_long: pd.DataFrame, monthly_index: pd.DatetimeIndex) -> pd.DataFrame:
+    print("  Precomputing ADTV matrix (vectorized) ...")
+    pl = prices_long.copy()
+    pl["dtv"] = pl["close"] * pl["volume"] / CRORE
+
+    dtv_wide = pl.pivot_table(index="date", columns="symbol", values="dtv", aggfunc="first")
+    dtv_wide.index = pd.to_datetime(dtv_wide.index)
+    dtv_wide = dtv_wide.sort_index()
+    all_dates = dtv_wide.index.values
+
+    records = {}
+    for month_end in monthly_index:
+        mask         = all_dates <= np.datetime64(month_end)
+        window_dates = all_dates[mask][-ADTV_DAYS:]
+        if len(window_dates) < 10:
+            continue
+        records[month_end] = dtv_wide.loc[window_dates].mean()
+
+    adtv_matrix = pd.DataFrame(records).T
+    adtv_matrix.index = pd.to_datetime(adtv_matrix.index)
+    print(f"  ADTV matrix shape: {adtv_matrix.shape}")
+    return adtv_matrix
+
+
+# ---------------------------------------------------------------------------
+# Signal at date T
 # ---------------------------------------------------------------------------
 def get_signals_at_date(
     date      : pd.Timestamp,
@@ -130,9 +159,7 @@ def get_signals_at_date(
             continue
 
         col = sym_map.get(ticker, ticker)
-        if col not in monthly_px.columns:
-            continue
-        if date not in monthly_px.index:
+        if col not in monthly_px.columns or date not in monthly_px.index:
             continue
         price = monthly_px.loc[date, col]
         if pd.isna(price) or price <= 0:
@@ -152,28 +179,42 @@ def get_signals_at_date(
 
 
 # ---------------------------------------------------------------------------
-# Backtest loop
+# Backtest loop — vectorized return lookup
 # ---------------------------------------------------------------------------
 def run_backtest(
-    prices_long : pd.DataFrame,
-    monthly_px  : pd.DataFrame,
-    universe_df : pd.DataFrame,
-    shares_df   : pd.DataFrame,
-    sym_map     : dict,
+    monthly_px   : pd.DataFrame,
+    return_matrix: pd.DataFrame,
+    adtv_matrix  : pd.DataFrame,
+    universe_df  : pd.DataFrame,
+    shares_df    : pd.DataFrame,
+    sym_map      : dict,
 ) -> pd.DataFrame:
 
+    rev_map     = {v: k for k, v in sym_map.items()}
     periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
     dates       = [p.to_timestamp(how="end").normalize() for p in periods]
     valid_dates = [d for d in dates if d in monthly_px.index]
-
+    idx         = monthly_px.index
     all_records = []
 
     for date in valid_dates:
-        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
-        if not universe:
+        pit = get_pit_universe(date, universe_df)
+        if not pit:
             continue
 
-        universe = [t for t in universe if t not in EXCLUDE_TICKERS]
+        threshold = get_adtv_threshold(date)
+        if date not in adtv_matrix.index:
+            continue
+        adtv_row  = adtv_matrix.loc[date]
+        pit_cols  = [sym_map.get(s, s) for s in pit]
+        pit_cols  = [c for c in pit_cols if c in adtv_row.index]
+        adtv_pass = adtv_row[pit_cols].dropna()
+        adtv_pass = adtv_pass[adtv_pass >= threshold].index.tolist()
+        universe  = [rev_map.get(c, c) for c in adtv_pass
+                     if rev_map.get(c, c) not in EXCLUDE_TICKERS]
+
+        if len(universe) < MIN_STOCKS:
+            continue
 
         signals = get_signals_at_date(date, universe, shares_df, monthly_px, sym_map)
         if signals.empty or len(signals) < 10:
@@ -182,8 +223,7 @@ def run_backtest(
 
         signals["score"] = zscore(signals["raw"])
         signals["date"]  = date
-
-        all_records.append(signals[["nse_ticker","date","raw","score","market_cap"]])
+        all_records.append(signals[["nse_ticker", "date", "raw", "score", "market_cap"]])
 
     if not all_records:
         return pd.DataFrame()
@@ -192,18 +232,19 @@ def run_backtest(
 
 
 # ---------------------------------------------------------------------------
-# Long-short return computation
+# Vectorized return computation
 # ---------------------------------------------------------------------------
 def compute_long_short_returns(
-    scores_df  : pd.DataFrame,
-    score_col  : str,
-    monthly_px : pd.DataFrame,
-    sym_map    : dict,
+    scores_df    : pd.DataFrame,
+    score_col    : str,
+    monthly_px   : pd.DataFrame,
+    return_matrix: pd.DataFrame,
+    sym_map      : dict,
 ) -> pd.DataFrame:
     records = []
-    dates   = sorted(scores_df["date"].unique())
+    idx     = monthly_px.index
 
-    for date in dates:
+    for date in sorted(scores_df["date"].unique()):
         month_df = scores_df[
             scores_df["date"] == date
         ][["nse_ticker", score_col]].dropna(subset=[score_col])
@@ -211,47 +252,39 @@ def compute_long_short_returns(
         if len(month_df) < MIN_STOCKS:
             continue
 
-        long_thresh   = month_df[score_col].quantile(LONG_PCTILE)
-        short_thresh  = month_df[score_col].quantile(SHORT_PCTILE)
-        long_tickers  = month_df[month_df[score_col] >= long_thresh]["nse_ticker"].tolist()
-        short_tickers = month_df[month_df[score_col] <= short_thresh]["nse_ticker"].tolist()
-
-        if not long_tickers or not short_tickers:
-            continue
-
-        idx = monthly_px.index
         if date not in idx:
             continue
         pos = idx.get_loc(date)
         if pos >= len(idx) - 1:
             continue
-
-        t_end  = idx[pos]
         t1_end = idx[pos + 1]
 
-        def get_ret(ticker):
-            col = sym_map.get(ticker, ticker)
-            if col not in monthly_px.columns:
-                return np.nan
-            p0 = monthly_px.loc[t_end,  col]
-            p1 = monthly_px.loc[t1_end, col]
-            if pd.notna(p0) and pd.notna(p1) and p0 > 0:
-                return (p1 / p0) - 1
-            return np.nan
+        long_thresh   = month_df[score_col].quantile(LONG_PCTILE)
+        short_thresh  = month_df[score_col].quantile(SHORT_PCTILE)
+        long_tickers  = month_df[month_df[score_col] >= long_thresh]["nse_ticker"].tolist()
+        short_tickers = month_df[month_df[score_col] <= short_thresh]["nse_ticker"].tolist()
 
-        long_rets  = [r for t in long_tickers  if not np.isnan(r := get_ret(t))]
-        short_rets = [r for t in short_tickers if not np.isnan(r := get_ret(t))]
+        long_cols  = [sym_map.get(t, t) for t in long_tickers]
+        short_cols = [sym_map.get(t, t) for t in short_tickers]
+        long_cols  = [c for c in long_cols  if c in return_matrix.columns]
+        short_cols = [c for c in short_cols if c in return_matrix.columns]
 
-        if not long_rets or not short_rets:
+        if t1_end not in return_matrix.index:
+            continue
+
+        long_rets  = return_matrix.loc[t1_end, long_cols].dropna()
+        short_rets = return_matrix.loc[t1_end, short_cols].dropna()
+
+        if long_rets.empty or short_rets.empty:
             continue
 
         records.append({
-            "date"         : date,
-            "size_return"  : np.mean(long_rets) - np.mean(short_rets),
-            "long_return"  : np.mean(long_rets),
-            "short_return" : np.mean(short_rets),
-            "long_count"   : len(long_rets),
-            "short_count"  : len(short_rets),
+            "date"        : t1_end,
+            "size_return" : long_rets.mean() - short_rets.mean(),
+            "long_return" : long_rets.mean(),
+            "short_return": short_rets.mean(),
+            "long_count"  : len(long_rets),
+            "short_count" : len(short_rets),
             "universe_size": len(month_df),
         })
 
@@ -266,7 +299,8 @@ def print_return_stats(df: pd.DataFrame, name: str):
     if df.empty:
         print(f"  {name}: NO RESULTS")
         return
-    ret_col  = [c for c in df.columns if c.endswith("_return") and "long" not in c and "short" not in c][0]
+    ret_col  = [c for c in df.columns if c.endswith("_return")
+                and "long" not in c and "short" not in c][0]
     r        = df[ret_col]
     ann_ret  = r.mean() * 12
     ann_vol  = r.std() * np.sqrt(12)
@@ -297,67 +331,44 @@ def main():
     monthly_px = build_monthly_close(prices_long)
     print(f"  Monthly shape: {monthly_px.shape}")
 
+    print("Building return matrix ...")
+    return_matrix = monthly_px.pct_change()
+
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
     print(f"  {len(universe_df)} rebalance snapshots loaded")
 
-    print("Loading fundamentals for shares_cr ...")
-    fund_raw = pd.read_parquet(FUND_FILE)
-    fund_raw["fy_end"] = fund_raw["fiscal_year"].apply(parse_fiscal_year_end)
-    fund_raw = fund_raw[fund_raw["fy_end"].notna()].sort_values(
-        ["nse_ticker","fy_end"]
-    ).reset_index(drop=True)
-    shares_df = load_shares(fund_raw)
+    print("Loading shares data ...")
+    shares_df = load_shares(FUND_FILE)
     print(f"  {shares_df['nse_ticker'].nunique()} tickers with shares_cr data")
 
+    adtv_matrix = build_adtv_matrix(prices_long, monthly_px.index)
+
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    results = run_backtest(prices_long, monthly_px, universe_df, shares_df, sym_map)
+    results = run_backtest(
+        monthly_px, return_matrix, adtv_matrix,
+        universe_df, shares_df, sym_map
+    )
 
     if results.empty:
         print("ERROR: no results produced")
         return
 
-    n_months      = results["date"].nunique()
-    n_tickers     = results["nse_ticker"].nunique()
-    avg_per_month = results.groupby("date").size().mean()
-    results["mcap_cr"] = results["market_cap"] / 1e7
-
-    print(f"\n{'='*60}")
-    print(f"SIZE FACTOR — SUMMARY")
-    print(f"{'='*60}")
-    print(f"  Months covered       : {n_months}")
-    print(f"  Unique tickers       : {n_tickers}")
-    print(f"  Avg stocks/month     : {avg_per_month:.0f}")
-    print(f"\n  score stats:")
-    print(f"    mean={results['score'].mean():.4f}  "
-          f"std={results['score'].std():.4f}  "
-          f"min={results['score'].min():.2f}  "
-          f"max={results['score'].max():.2f}")
-
-    last_date  = results["date"].max()
-    last_month = results[results["date"] == last_date].sort_values("score", ascending=False)
-
-    print(f"\n  Top 10 Size scores ({last_date.strftime('%Y-%m')}) — smallest caps:")
-    print(last_month[["nse_ticker","mcap_cr","raw","score"]].head(10).to_string(index=False))
-    print(f"\n  Bottom 10 Size scores ({last_date.strftime('%Y-%m')}) — largest caps:")
-    print(last_month[["nse_ticker","mcap_cr","raw","score"]].tail(10).to_string(index=False))
-
-    print(f"\n  Market cap distribution in {last_date.strftime('%Y-%m')} (Cr):")
-    print(last_month["mcap_cr"].describe().apply(lambda x: f"{x:,.0f}").to_string())
-
-    print(f"\n  Stocks per month (first 5 and last 5):")
-    monthly_counts = results.groupby("date").size()
-    print(pd.concat([monthly_counts.head(5), monthly_counts.tail(5)]).to_string())
-
-    results = results.drop(columns=["market_cap"])
     results.to_parquet(OUTPUT_FILE)
-    print(f"\nSaved -> {OUTPUT_FILE}")
+    print(f"Saved -> {OUTPUT_FILE}")
 
     print("\nComputing long-short return series ...")
-    size_returns = compute_long_short_returns(results, "score", monthly_px, sym_map)
+    size_returns = compute_long_short_returns(
+        results, "score", monthly_px, return_matrix, sym_map
+    )
     print_return_stats(size_returns, "SIZE")
     size_returns.to_parquet(OUTPUT_RET)
-    print(f"  Saved -> {OUTPUT_RET}")
+
+    print("\nAround COVID (date = month return was earned):")
+    covid = size_returns.loc[
+        size_returns.index >= pd.Timestamp("2020-01-01")
+    ].head(7)[["size_return", "long_return", "short_return"]]
+    print(covid.to_string())
 
     print("Done.")
 

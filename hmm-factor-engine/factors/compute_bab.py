@@ -1,19 +1,11 @@
 """
 compute_bab.py
 ==============
-BAB — Betting Against Beta Factor Construction
+BAB — Betting Against Beta Factor Construction (vectorized, fast)
 
 Signal   : rolling 60-month OLS beta vs Nifty 500 excess return
-Long leg : lowest beta decile, levered to beta=1
-Short leg: highest beta decile, de-levered to beta=1
-
-Output
-------
-hmm-factor-engine/factors/data/bab_returns.parquet
-
-Usage
------
-  python3 hmm-factor-engine/factors/compute_bab.py
+Long leg : lowest beta decile
+Return   : long leg return recorded at next_date (month return is earned)
 """
 
 import csv
@@ -25,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
+from universe import build_universe_lookup, get_pit_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -48,16 +40,24 @@ SIGNALS_FILE    = FACTORS_DIR / "factor_bab.parquet"
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BACKTEST_START  = "2014-01"
-BACKTEST_END    = "2026-06"
-MIN_STOCKS      = 20
-BETA_WINDOW     = 60
-MIN_OBS         = 36
-LONG_PCTILE     = 0.10
-SHORT_PCTILE    = 0.90
-MAX_LEVERAGE    = 2.0
-MIN_BETA        = 0.20
-MAX_BETA        = 5.0
+BACKTEST_START = "2014-01"
+BACKTEST_END   = "2026-06"
+MIN_STOCKS     = 20
+BETA_WINDOW    = 60
+MIN_OBS        = 36
+LONG_PCTILE    = 0.10
+SHORT_PCTILE   = 0.90
+MAX_LEVERAGE   = 2.0
+MIN_BETA       = 0.20
+MAX_BETA       = 5.0
+CRORE          = 1e7
+ADTV_DAYS      = 63
+
+ADTV_SCHEDULE = [
+    (pd.Timestamp("2018-01-01"), 10.0),
+    (pd.Timestamp("2022-01-01"), 20.0),
+    (pd.Timestamp("9999-01-01"), 30.0),
+]
 
 RFR_SCHEDULE = [
     ("2005-04", "2011-12", 0.080),
@@ -65,6 +65,12 @@ RFR_SCHEDULE = [
     ("2020-01", "2021-12", 0.050),
     ("2022-01", "2099-12", 0.070),
 ]
+
+def get_adtv_threshold(date: pd.Timestamp) -> float:
+    for cutoff, threshold in ADTV_SCHEDULE:
+        if date < cutoff:
+            return threshold
+    return 30.0
 
 
 # ---------------------------------------------------------------------------
@@ -96,132 +102,166 @@ def load_nifty_excess_returns(hmm_file: Path) -> pd.Series:
     return excess
 
 
-def build_monthly_stock_excess(monthly_px: pd.DataFrame) -> pd.DataFrame:
-    """Build monthly excess returns from wide monthly close prices."""
-    monthly_ret  = monthly_px.pct_change()
-    rfr          = build_rfr_series(monthly_ret.index)
-    stock_excess = monthly_ret.subtract(rfr, axis=0)
-    return stock_excess
+# ---------------------------------------------------------------------------
+# Fast vectorized ADTV
+# ---------------------------------------------------------------------------
+def build_adtv_matrix(prices_long: pd.DataFrame, monthly_index: pd.DatetimeIndex) -> pd.DataFrame:
+    print("  Precomputing ADTV matrix (vectorized) ...")
+    prices_long = prices_long.copy()
+    prices_long["dtv"] = prices_long["close"] * prices_long["volume"] / CRORE
+
+    dtv_wide = prices_long.pivot_table(
+        index="date", columns="symbol", values="dtv", aggfunc="first"
+    )
+    dtv_wide.index = pd.to_datetime(dtv_wide.index)
+    dtv_wide = dtv_wide.sort_index()
+
+    all_dates = dtv_wide.index.values
+    records   = {}
+    for month_end in monthly_index:
+        mask         = all_dates <= np.datetime64(month_end)
+        window_dates = all_dates[mask][-ADTV_DAYS:]
+        if len(window_dates) < 10:
+            continue
+        records[month_end] = dtv_wide.loc[window_dates].mean()
+
+    adtv_matrix = pd.DataFrame(records).T
+    adtv_matrix.index = pd.to_datetime(adtv_matrix.index)
+    print(f"  ADTV matrix shape: {adtv_matrix.shape}")
+    return adtv_matrix
 
 
 # ---------------------------------------------------------------------------
-# Core signal — compute beta for each stock
+# Precompute beta matrix for all stocks and all months
 # ---------------------------------------------------------------------------
-def compute_bab_signal(
-    stock_excess    : pd.DataFrame,
-    nifty_excess    : pd.Series,
-    universe_symbols: list,
-    date            : pd.Timestamp,
-    sym_map         : dict,
-) -> pd.Series:
-    idx = stock_excess.index
-    if date not in idx:
-        return pd.Series(dtype=float)
+def build_beta_matrix(
+    stock_excess: pd.DataFrame,
+    nifty_excess: pd.Series,
+    monthly_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    print("  Precomputing beta matrix ...")
+    nifty_vals = nifty_excess.reindex(stock_excess.index)
+    nifty_var  = nifty_vals.rolling(BETA_WINDOW, min_periods=MIN_OBS).var()
 
-    pos = idx.get_loc(date)
-    if pos < MIN_OBS:
-        return pd.Series(dtype=float)
-
-    start_pos  = max(0, pos - BETA_WINDOW + 1)
-    window_idx = idx[start_pos : pos + 1]
-
-    nifty_w = nifty_excess.reindex(window_idx).dropna()
-    if len(nifty_w) < MIN_OBS:
-        return pd.Series(dtype=float)
-
-    betas = {}
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col not in stock_excess.columns:
+    beta_records = {}
+    for month_end in monthly_index:
+        if month_end not in stock_excess.index:
+            continue
+        pos = stock_excess.index.get_loc(month_end)
+        if pos < MIN_OBS:
             continue
 
-        stock_w = stock_excess[col].reindex(window_idx)
-        common  = pd.concat([stock_w, nifty_w], axis=1).dropna()
-        if len(common) < MIN_OBS:
+        start_pos  = max(0, pos - BETA_WINDOW + 1)
+        window_idx = stock_excess.index[start_pos: pos + 1]
+        nifty_w    = nifty_vals.reindex(window_idx).dropna()
+
+        if len(nifty_w) < MIN_OBS:
             continue
 
-        s_ret = common.iloc[:, 0]
-        n_ret = common.iloc[:, 1]
-        nv    = n_ret.var()
+        nv = nifty_w.var()
         if nv == 0:
             continue
 
-        beta = s_ret.cov(n_ret) / nv
+        stock_w = stock_excess.reindex(window_idx)
+        # Covariance of each stock with nifty
+        cov = stock_w.apply(
+            lambda col: col.cov(nifty_w) if col.dropna().shape[0] >= MIN_OBS else np.nan
+        )
+        betas = cov / nv
+        # Clip to valid range
+        betas = betas.where((betas >= MIN_BETA) & (betas <= MAX_BETA))
+        beta_records[month_end] = betas
 
-        if pd.notna(beta) and MIN_BETA <= beta <= MAX_BETA:
-            betas[sym] = beta
-
-    return pd.Series(betas)
+    beta_matrix = pd.DataFrame(beta_records).T
+    beta_matrix.index = pd.to_datetime(beta_matrix.index)
+    print(f"  Beta matrix shape: {beta_matrix.shape}")
+    return beta_matrix
 
 
 # ---------------------------------------------------------------------------
-# Backtest loop
+# Main backtest — vectorized
 # ---------------------------------------------------------------------------
 def run_backtest(
-    stock_excess: pd.DataFrame,
-    nifty_excess: pd.Series,
-    prices_long : pd.DataFrame,
-    universe_df : pd.DataFrame,
-    sym_map     : dict,
-    start       : str = BACKTEST_START,
-    end         : str = BACKTEST_END,
+    stock_excess  : pd.DataFrame,
+    nifty_excess  : pd.Series,
+    beta_matrix   : pd.DataFrame,
+    adtv_matrix   : pd.DataFrame,
+    return_matrix : pd.DataFrame,
+    universe_df   : pd.DataFrame,
+    sym_map       : dict,
 ) -> tuple:
-    periods = pd.period_range(start=start, end=end, freq="M")
-    idx     = stock_excess.index
+
+    rev_map = {v: k for k, v in sym_map.items()}
+
+    periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
+    valid_dates = [
+        p.to_timestamp(how="end").normalize()
+        for p in periods
+        if p.to_timestamp(how="end").normalize() in stock_excess.index
+    ]
 
     records        = []
     signal_records = []
+    idx            = stock_excess.index
 
-    for i, period in enumerate(periods):
-        date = period.to_timestamp(how="end").normalize()
-
-        if i + 1 >= len(periods):
+    print(f"  Looping over {len(valid_dates)} months ...")
+    for date in valid_dates:
+        pos = idx.get_loc(date)
+        if pos >= len(idx) - 1:
             continue
-        next_date = periods[i + 1].to_timestamp(how="end").normalize()
+        next_date = idx[pos + 1]
 
-        candidates = idx[idx <= date + pd.offsets.Day(5)]
-        if candidates.empty:
-            continue
-        date = candidates[-1]
-
-        candidates = idx[idx <= next_date + pd.offsets.Day(5)]
-        if candidates.empty:
-            continue
-        next_date = candidates[-1]
-
-        if date == next_date:
+        # Universe
+        pit = get_pit_universe(date, universe_df)
+        if not pit:
             continue
 
-        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
-        if not universe:
+        # ADTV filter
+        threshold = get_adtv_threshold(date)
+        if date not in adtv_matrix.index:
+            continue
+        adtv_row  = adtv_matrix.loc[date]
+        pit_cols  = [sym_map.get(s, s) for s in pit]
+        pit_cols  = [c for c in pit_cols if c in adtv_row.index]
+        adtv_pass = adtv_row[pit_cols].dropna()
+        adtv_pass = adtv_pass[adtv_pass >= threshold].index.tolist()
+
+        if len(adtv_pass) < MIN_STOCKS:
             continue
 
-        betas = compute_bab_signal(stock_excess, nifty_excess, universe, date, sym_map)
+        # Beta lookup
+        if date not in beta_matrix.index:
+            continue
+        beta_row = beta_matrix.loc[date, adtv_pass].dropna()
+        beta_row = beta_row[(beta_row >= MIN_BETA) & (beta_row <= MAX_BETA)]
 
-        if len(betas) < MIN_STOCKS:
-            print(f"  SKIP {period}: only {len(betas)} stocks with valid beta")
+        if len(beta_row) < MIN_STOCKS:
+            print(f"  SKIP {date.strftime('%Y-%m')}: only {len(beta_row)} stocks with valid beta")
             continue
 
+        # Save signals
         if SAVE_SIGNALS:
-            pct = 1 - betas.rank(pct=True)
-            for sym, raw in betas.items():
+            pct = 1 - beta_row.rank(pct=True)
+            for col, raw in beta_row.items():
+                sym = rev_map.get(col, col)
                 signal_records.append({
                     "nse_ticker" : sym,
                     "date"       : date,
                     "signal"     : float(raw),
-                    "percentile" : float(pct[sym]),
+                    "percentile" : float(pct[col] if not hasattr(pct[col], "__len__") else pct[col].iloc[0]),
                 })
 
-        long_thresh  = betas.quantile(LONG_PCTILE)
-        short_thresh = betas.quantile(SHORT_PCTILE)
-        long_stocks  = betas[betas <= long_thresh].index.tolist()
-        short_stocks = betas[betas >= short_thresh].index.tolist()
+        # Long / short
+        long_thresh  = beta_row.quantile(LONG_PCTILE)
+        short_thresh = beta_row.quantile(SHORT_PCTILE)
+        long_cols    = beta_row[beta_row <= long_thresh].index.tolist()
+        short_cols   = beta_row[beta_row >= short_thresh].index.tolist()
 
-        if not long_stocks or not short_stocks:
+        if not long_cols or not short_cols:
             continue
 
-        avg_beta_long  = betas[long_stocks].mean()
-        avg_beta_short = betas[short_stocks].mean()
+        avg_beta_long  = beta_row[long_cols].mean()
+        avg_beta_short = beta_row[short_cols].mean()
 
         if avg_beta_long < MIN_BETA or avg_beta_short < MIN_BETA:
             continue
@@ -229,38 +269,23 @@ def run_backtest(
         leverage_long  = min(1.0 / avg_beta_long,  MAX_LEVERAGE)
         leverage_short = min(1.0 / avg_beta_short, MAX_LEVERAGE)
 
-        long_rets, short_rets = [], []
+        # Returns
+        if next_date not in return_matrix.index:
+            continue
+        long_rets  = return_matrix.loc[next_date, long_cols].dropna()
+        short_rets = return_matrix.loc[next_date, short_cols].dropna()
 
-        for sym in long_stocks:
-            col = sym_map.get(sym, sym)
-            if col not in stock_excess.columns:
-                continue
-            r = stock_excess.loc[next_date, col] if next_date in idx else np.nan
-            if pd.notna(r):
-                long_rets.append(r)
-
-        for sym in short_stocks:
-            col = sym_map.get(sym, sym)
-            if col not in stock_excess.columns:
-                continue
-            r = stock_excess.loc[next_date, col] if next_date in idx else np.nan
-            if pd.notna(r):
-                short_rets.append(r)
-
-        if not long_rets or not short_rets:
+        if long_rets.empty or short_rets.empty:
             continue
 
-        raw_long  = np.mean(long_rets)
-        raw_short = np.mean(short_rets)
-
         records.append({
-            "date"          : date,
-            "bab_return"    : raw_long * leverage_long - raw_short * leverage_short,
-            "long_return"   : raw_long  * leverage_long,
-            "short_return"  : raw_short * leverage_short,
+            "date"          : next_date,
+            "bab_return"    : long_rets.mean() * leverage_long - short_rets.mean() * leverage_short,
+            "long_return"   : long_rets.mean() * leverage_long,
+            "short_return"  : short_rets.mean() * leverage_short,
             "long_count"    : len(long_rets),
             "short_count"   : len(short_rets),
-            "universe_size" : len(betas),
+            "universe_size" : len(beta_row),
             "avg_beta_long" : round(avg_beta_long,  3),
             "avg_beta_short": round(avg_beta_short, 3),
         })
@@ -282,32 +307,37 @@ def main():
     sym_map = load_symbol_map(SYMBOL_MAP_FILE)
     print(f"  {len(sym_map)} mappings loaded")
 
-    print("\nLoading Nifty 500 excess return series ...")
+    print("Loading Nifty 500 excess return series ...")
     nifty_excess = load_nifty_excess_returns(HMM_FILE)
 
-    print("\nLoading daily prices (long format) ...")
+    print("Loading daily prices (long format) ...")
     prices_long = load_prices_long(PRICE_FILE)
     print(f"  Prices shape: {prices_long.shape}")
 
-    print("\nBuilding monthly close prices ...")
+    print("Building monthly close prices ...")
     monthly_px = build_monthly_close(prices_long)
     print(f"  Monthly shape: {monthly_px.shape}")
 
-    print("\nBuilding monthly stock excess returns ...")
-    stock_excess = build_monthly_stock_excess(monthly_px)
+    print("Building monthly stock excess returns ...")
+    monthly_ret  = monthly_px.pct_change()
+    rfr          = build_rfr_series(monthly_ret.index)
+    stock_excess = monthly_ret.subtract(rfr, axis=0)
     print(f"  Stock excess shape: {stock_excess.shape}")
 
-    print("\nBuilding point-in-time universe lookup ...")
+    print("Building return matrix ...")
+    return_matrix = monthly_px.pct_change()
+
+    print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
     print(f"  {len(universe_df)} rebalance snapshots loaded")
 
-    print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    print(f"  ADTV filter     : time-varying (10/20/30cr)")
-    print(f"  Beta range      : [{MIN_BETA}, {MAX_BETA}]")
-    print(f"  Max leverage    : {MAX_LEVERAGE}x")
+    adtv_matrix = build_adtv_matrix(prices_long, monthly_px.index)
+    beta_matrix = build_beta_matrix(stock_excess, nifty_excess, monthly_px.index)
 
+    print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
     results, signal_records = run_backtest(
-        stock_excess, nifty_excess, prices_long, universe_df, sym_map
+        stock_excess, nifty_excess, beta_matrix, adtv_matrix,
+        return_matrix, universe_df, sym_map
     )
 
     if results.empty:
@@ -337,10 +367,9 @@ def main():
     print(f"  Avg beta long leg   : {results['avg_beta_long'].mean():.3f}")
     print(f"  Avg beta short leg  : {results['avg_beta_short'].mean():.3f}")
 
-    print(f"\nFirst 5 rows:")
-    print(results.head().to_string())
-    print(f"\nLast 5 rows:")
-    print(results.tail().to_string())
+    print(f"\nAround COVID (date = month return was earned):")
+    covid = results.loc["2020-01":"2020-07", ["bab_return","long_return","short_return"]]
+    print(covid.to_string())
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")

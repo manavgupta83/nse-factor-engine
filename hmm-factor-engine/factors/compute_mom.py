@@ -1,22 +1,12 @@
 """
 compute_mom.py
 ==============
-MOM — Momentum Factor Construction
+MOM — Momentum Factor Construction (vectorized, fast)
 
 Signal   : cumulative return months t-12 to t-2
-           (skip t-1 to avoid short-term reversal)
-Long leg : top decile by signal (highest momentum)
-Short leg: bottom decile by signal (lowest momentum)
-Return   : equal-weight long leg minus equal-weight short leg (next month)
-Min stocks: 20 in universe after ADTV + NaN filter
-
-Output
-------
-hmm-factor-engine/factors/data/mom_returns.parquet
-
-Usage
------
-  python3 hmm-factor-engine/factors/compute_mom.py
+Long leg : top decile by signal
+Return   : equal-weight long leg minus short leg (next month)
+Date fix : return recorded at next_date (month return is earned)
 """
 
 import csv
@@ -28,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
+from universe import build_universe_lookup, get_pit_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -50,15 +40,29 @@ SIGNALS_FILE    = FACTORS_DIR / "factor_mom.parquet"
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-BACKTEST_START  = "2014-01"
-BACKTEST_END    = "2026-06"
-MIN_STOCKS      = 20
-LONG_PCTILE     = 0.90
-SHORT_PCTILE    = 0.10
+BACKTEST_START = "2014-01"
+BACKTEST_END   = "2026-06"
+MIN_STOCKS     = 20
+LONG_PCTILE    = 0.90
+SHORT_PCTILE   = 0.10
+ADTV_DAYS      = 63
+CRORE          = 1e7
+
+ADTV_SCHEDULE = [
+    (pd.Timestamp("2018-01-01"), 10.0),
+    (pd.Timestamp("2022-01-01"), 20.0),
+    (pd.Timestamp("9999-01-01"), 30.0),
+]
+
+def get_adtv_threshold(date: pd.Timestamp) -> float:
+    for cutoff, threshold in ADTV_SCHEDULE:
+        if date < cutoff:
+            return threshold
+    return 30.0
 
 
 # ---------------------------------------------------------------------------
-# Load helpers
+# Helpers
 # ---------------------------------------------------------------------------
 def load_symbol_map(map_file: Path) -> dict:
     sym_map = {}
@@ -69,133 +73,142 @@ def load_symbol_map(map_file: Path) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Core signal function
+# Fast vectorized ADTV — compute for ALL symbols and ALL months at once
 # ---------------------------------------------------------------------------
-def compute_mom_signal(
-    monthly_prices  : pd.DataFrame,
-    universe_symbols: list,
-    date            : pd.Timestamp,
-    sym_map         : dict,
-) -> pd.Series:
-    idx = monthly_prices.index
-    if date not in idx:
-        return pd.Series(dtype=float)
+def build_adtv_matrix(prices_long: pd.DataFrame, monthly_index: pd.DatetimeIndex) -> pd.DataFrame:
+    """
+    Returns DataFrame (month_end_dates x symbols) of ADTV in crore.
+    Uses groupby instead of per-symbol loops — orders of magnitude faster.
+    """
+    print("  Precomputing ADTV matrix (vectorized) ...")
+    prices_long = prices_long.copy()
+    prices_long["dtv"] = prices_long["close"] * prices_long["volume"] / CRORE
 
-    pos = idx.get_loc(date)
-    if pos < 12:
-        return pd.Series(dtype=float)
+    # Pivot to wide: (date x symbol) daily DTV
+    dtv_wide = prices_long.pivot_table(
+        index="date", columns="symbol", values="dtv", aggfunc="first"
+    )
+    dtv_wide.index = pd.to_datetime(dtv_wide.index)
+    dtv_wide = dtv_wide.sort_index()
 
-    t_minus_2  = idx[pos - 2]
-    t_minus_12 = idx[pos - 12]
+    # For each month-end, rolling mean of past ADTV_DAYS trading days
+    records = {}
+    all_dates = dtv_wide.index.values
 
-    signals = {}
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col not in monthly_prices.columns:
+    for month_end in monthly_index:
+        mask         = all_dates <= np.datetime64(month_end)
+        window_dates = all_dates[mask][-ADTV_DAYS:]
+        if len(window_dates) < 10:
             continue
-        p_t2  = monthly_prices.loc[t_minus_2,  col]
-        p_t12 = monthly_prices.loc[t_minus_12, col]
-        if pd.notna(p_t2) and pd.notna(p_t12) and p_t12 > 0:
-            signals[sym] = (p_t2 / p_t12) - 1
+        records[month_end] = dtv_wide.loc[window_dates].mean()
 
-    return pd.Series(signals)
-
-
-def compute_next_month_returns(
-    monthly_prices  : pd.DataFrame,
-    universe_symbols: list,
-    date            : pd.Timestamp,
-    sym_map         : dict,
-) -> pd.Series:
-    idx = monthly_prices.index
-    if date not in idx:
-        return pd.Series(dtype=float)
-
-    pos = idx.get_loc(date)
-    if pos >= len(idx) - 1:
-        return pd.Series(dtype=float)
-
-    t_end  = idx[pos]
-    t1_end = idx[pos + 1]
-
-    returns = {}
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col not in monthly_prices.columns:
-            continue
-        p_t  = monthly_prices.loc[t_end,  col]
-        p_t1 = monthly_prices.loc[t1_end, col]
-        if pd.notna(p_t) and pd.notna(p_t1) and p_t > 0:
-            returns[sym] = (p_t1 / p_t) - 1
-
-    return pd.Series(returns)
+    adtv_matrix = pd.DataFrame(records).T
+    adtv_matrix.index = pd.to_datetime(adtv_matrix.index)
+    print(f"  ADTV matrix shape: {adtv_matrix.shape}")
+    return adtv_matrix
 
 
 # ---------------------------------------------------------------------------
-# Backtest loop
+# Main backtest — fully vectorized, no inner stock loops
 # ---------------------------------------------------------------------------
 def run_backtest(
     monthly_prices: pd.DataFrame,
-    prices_long   : pd.DataFrame,
+    adtv_matrix   : pd.DataFrame,
     universe_df   : pd.DataFrame,
     sym_map       : dict,
-    start         : str = BACKTEST_START,
-    end           : str = BACKTEST_END,
 ) -> tuple:
-    periods     = pd.period_range(start=start, end=end, freq="M")
-    dates       = [p.to_timestamp(how="end").normalize() for p in periods]
-    valid_dates = [d for d in dates if d in monthly_prices.index]
+
+    # Reverse sym_map: parquet_col -> csv_symbol
+    rev_map = {v: k for k, v in sym_map.items()}
+
+    # Signal matrix: price[t-2] / price[t-12] - 1  (dates x symbols)
+    print("  Building signal matrix ...")
+    signal_matrix = monthly_prices.shift(2) / monthly_prices.shift(12) - 1
+
+    # Return matrix: price[t] / price[t-1] - 1  (dates x symbols)
+    # return_matrix[t] = return EARNED in month t
+    print("  Building return matrix ...")
+    return_matrix = monthly_prices.pct_change()
+
+    periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
+    valid_dates = [
+        p.to_timestamp(how="end").normalize()
+        for p in periods
+        if p.to_timestamp(how="end").normalize() in monthly_prices.index
+    ]
 
     records        = []
     signal_records = []
+    idx            = monthly_prices.index
 
+    print(f"  Looping over {len(valid_dates)} months ...")
     for date in valid_dates:
-        universe = get_clean_universe(date, prices_long, universe_df, sym_map)
-        if not universe:
+        pos = idx.get_loc(date)
+        if pos < 12 or pos >= len(idx) - 1:
             continue
 
-        signal = compute_mom_signal(monthly_prices, universe, date, sym_map)
+        next_date = idx[pos + 1]
 
-        if len(signal) < MIN_STOCKS:
-            print(f"  SKIP {date.strftime('%Y-%m')}: only {len(signal)} stocks")
+        # --- Universe: PIT membership ---
+        pit = get_pit_universe(date, universe_df)
+        if not pit:
             continue
 
+        # --- ADTV filter (vectorized lookup) ---
+        threshold = get_adtv_threshold(date)
+        if date not in adtv_matrix.index:
+            continue
+        adtv_row   = adtv_matrix.loc[date]
+        pit_cols   = [sym_map.get(s, s) for s in pit]
+        pit_cols   = [c for c in pit_cols if c in adtv_row.index]
+        adtv_pass  = adtv_row[pit_cols].dropna()
+        adtv_pass  = adtv_pass[adtv_pass >= threshold].index.tolist()
+
+        if len(adtv_pass) < MIN_STOCKS:
+            continue
+
+        # --- Signal (vectorized lookup) ---
+        sig_row    = signal_matrix.loc[date, adtv_pass].dropna()
+        if len(sig_row) < MIN_STOCKS:
+            print(f"  SKIP {date.strftime('%Y-%m')}: only {len(sig_row)} stocks with signal")
+            continue
+
+        # --- Save signals ---
         if SAVE_SIGNALS:
-            pct = signal.rank(pct=True)
-            for sym, raw in signal.items():
+            pct = sig_row.rank(pct=True)
+            for col, raw in sig_row.items():
+                sym = rev_map.get(col, col)
                 signal_records.append({
                     "nse_ticker" : sym,
                     "date"       : date,
                     "signal"     : float(raw),
-                    "percentile" : float(pct[sym]),
+                    "percentile" : float(pct[col].iloc[0] if hasattr(pct[col], "__len__") else pct[col]),
                 })
 
-        long_thresh  = signal.quantile(LONG_PCTILE)
-        short_thresh = signal.quantile(SHORT_PCTILE)
-        long_stocks  = signal[signal >= long_thresh].index.tolist()
-        short_stocks = signal[signal <= short_thresh].index.tolist()
+        # --- Long / short selection ---
+        long_thresh  = sig_row.quantile(LONG_PCTILE)
+        short_thresh = sig_row.quantile(SHORT_PCTILE)
+        long_cols    = sig_row[sig_row >= long_thresh].index.tolist()
+        short_cols   = sig_row[sig_row <= short_thresh].index.tolist()
 
-        if not long_stocks or not short_stocks:
+        if not long_cols or not short_cols:
             continue
 
-        next_returns = compute_next_month_returns(monthly_prices, universe, date, sym_map)
-        if next_returns.empty:
-            continue
+        # --- Next month returns (vectorized lookup) ---
+        long_rets  = return_matrix.loc[next_date, long_cols].dropna()
+        short_rets = return_matrix.loc[next_date, short_cols].dropna()
 
-        long_rets  = [next_returns[s] for s in long_stocks  if s in next_returns]
-        short_rets = [next_returns[s] for s in short_stocks if s in next_returns]
-
-        if not long_rets or not short_rets:
+        if long_rets.empty or short_rets.empty:
             continue
 
         records.append({
-            "date"         : date,
-            "mom_return"   : np.mean(long_rets) - np.mean(short_rets),
-            "long_return"  : np.mean(long_rets),
-            "short_return" : np.mean(short_rets),
+            "date"         : next_date,   # return earned next month
+            "mom_return"   : long_rets.mean() - short_rets.mean(),
+            "long_return"  : long_rets.mean(),
+            "short_return" : short_rets.mean(),
             "long_count"   : len(long_rets),
             "short_count"  : len(short_rets),
-            "universe_size": len(signal),
+            "universe_size": len(sig_row),
         })
 
     df = pd.DataFrame(records)
@@ -227,8 +240,12 @@ def main():
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
     print(f"  {len(universe_df)} rebalance snapshots loaded")
 
+    adtv_matrix = build_adtv_matrix(prices_long, monthly_prices.index)
+
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    results, signal_records = run_backtest(monthly_prices, prices_long, universe_df, sym_map)
+    results, signal_records = run_backtest(
+        monthly_prices, adtv_matrix, universe_df, sym_map
+    )
 
     if results.empty:
         print("ERROR: no results produced")
@@ -245,20 +262,19 @@ def main():
     print(f"\n{'='*50}")
     print(f"MOM FACTOR RESULTS ({BACKTEST_START} to {BACKTEST_END})")
     print(f"{'='*50}")
-    print(f"  Months           : {len(results)}")
-    print(f"  Ann. return      : {ann_ret*100:.2f}%")
-    print(f"  Ann. volatility  : {ann_vol*100:.2f}%")
-    print(f"  Sharpe ratio     : {sharpe:.3f}")
-    print(f"  Max drawdown     : {drawdown*100:.2f}%")
-    print(f"  Hit rate         : {hit_rate*100:.1f}%")
-    print(f"  Avg universe     : {results['universe_size'].mean():.0f} stocks")
-    print(f"  Avg long count   : {results['long_count'].mean():.0f}")
-    print(f"  Avg short count  : {results['short_count'].mean():.0f}")
+    print(f"  Months          : {len(results)}")
+    print(f"  Ann. return     : {ann_ret*100:.2f}%")
+    print(f"  Ann. volatility : {ann_vol*100:.2f}%")
+    print(f"  Sharpe ratio    : {sharpe:.3f}")
+    print(f"  Max drawdown    : {drawdown*100:.2f}%")
+    print(f"  Hit rate        : {hit_rate*100:.1f}%")
+    print(f"  Avg universe    : {results['universe_size'].mean():.0f} stocks")
+    print(f"  Avg long count  : {results['long_count'].mean():.0f}")
+    print(f"  Avg short count : {results['short_count'].mean():.0f}")
 
-    print(f"\nFirst 5 rows:")
-    print(results.head().to_string())
-    print(f"\nLast 5 rows:")
-    print(results.tail().to_string())
+    print(f"\nAround COVID (date = month return was earned):")
+    covid = results.loc["2020-01":"2020-07", ["mom_return","long_return","short_return"]]
+    print(covid.to_string())
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")

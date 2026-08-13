@@ -1,20 +1,12 @@
 """
 compute_lowvol.py
 =================
-LOWVOL — Low Volatility Factor Construction
+LOWVOL — Low Volatility Factor Construction (vectorized, fast)
 
 Signal   : realised annualised volatility over past 60 trading days
            circuit breaker days removed (|daily return| >= 5%)
 Long leg : LOWEST vol decile
-Short leg: HIGHEST vol decile
-
-Output
-------
-hmm-factor-engine/factors/data/lowvol_returns.parquet
-
-Usage
------
-  python3 hmm-factor-engine/factors/compute_lowvol.py
+Date fix : return recorded at next_month_end (month return is earned)
 """
 
 import csv
@@ -26,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
-from universe import build_universe_lookup, get_clean_universe, load_prices_long, build_monthly_close
+from universe import build_universe_lookup, get_pit_universe, load_prices_long, build_monthly_close
 
 warnings.filterwarnings("ignore")
 
@@ -56,10 +48,24 @@ CIRCUIT_BREAKER_PCT   = 0.05
 MIN_DAYS_AFTER_FILTER = 20
 LONG_PCTILE           = 0.10
 SHORT_PCTILE          = 0.90
+CRORE                 = 1e7
+ADTV_DAYS             = 63
+
+ADTV_SCHEDULE = [
+    (pd.Timestamp("2018-01-01"), 10.0),
+    (pd.Timestamp("2022-01-01"), 20.0),
+    (pd.Timestamp("9999-01-01"), 30.0),
+]
+
+def get_adtv_threshold(date: pd.Timestamp) -> float:
+    for cutoff, threshold in ADTV_SCHEDULE:
+        if date < cutoff:
+            return threshold
+    return 30.0
 
 
 # ---------------------------------------------------------------------------
-# Load helpers
+# Helpers
 # ---------------------------------------------------------------------------
 def load_symbol_map(map_file: Path) -> dict:
     sym_map = {}
@@ -69,167 +75,176 @@ def load_symbol_map(map_file: Path) -> dict:
     return sym_map
 
 
-def build_daily_wide(prices_long: pd.DataFrame) -> pd.DataFrame:
-    """Pivot long-format to wide daily close. Used for vol computation."""
-    wide = prices_long.pivot(index="date", columns="symbol", values="close")
-    wide.index = pd.to_datetime(wide.index)
-    wide.columns.name = None
-    return wide
+# ---------------------------------------------------------------------------
+# Fast vectorized ADTV
+# ---------------------------------------------------------------------------
+def build_adtv_matrix(prices_long: pd.DataFrame, monthly_index: pd.DatetimeIndex) -> pd.DataFrame:
+    print("  Precomputing ADTV matrix (vectorized) ...")
+    pl = prices_long.copy()
+    pl["dtv"] = pl["close"] * pl["volume"] / CRORE
+
+    dtv_wide = pl.pivot_table(index="date", columns="symbol", values="dtv", aggfunc="first")
+    dtv_wide.index = pd.to_datetime(dtv_wide.index)
+    dtv_wide = dtv_wide.sort_index()
+    all_dates = dtv_wide.index.values
+
+    records = {}
+    for month_end in monthly_index:
+        mask         = all_dates <= np.datetime64(month_end)
+        window_dates = all_dates[mask][-ADTV_DAYS:]
+        if len(window_dates) < 10:
+            continue
+        records[month_end] = dtv_wide.loc[window_dates].mean()
+
+    adtv_matrix = pd.DataFrame(records).T
+    adtv_matrix.index = pd.to_datetime(adtv_matrix.index)
+    print(f"  ADTV matrix shape: {adtv_matrix.shape}")
+    return adtv_matrix
 
 
 # ---------------------------------------------------------------------------
-# Core signal function — operates on wide daily close
+# Precompute volatility matrix (vectorized)
 # ---------------------------------------------------------------------------
-def compute_lowvol_signal(
-    daily_wide      : pd.DataFrame,
-    universe_symbols: list,
-    date            : pd.Timestamp,
-    sym_map         : dict,
-) -> tuple:
-    idx       = daily_wide.index
-    valid_idx = idx[idx <= date]
+def build_vol_matrix(
+    prices_long  : pd.DataFrame,
+    monthly_index: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    print("  Precomputing volatility matrix (vectorized) ...")
 
-    if len(valid_idx) < LOOKBACK_DAYS + 1:
-        return pd.Series(dtype=float), 0.0
+    # Wide daily returns
+    daily_wide = prices_long.pivot_table(
+        index="date", columns="symbol", values="close", aggfunc="first"
+    )
+    daily_wide.index = pd.to_datetime(daily_wide.index)
+    daily_wide = daily_wide.sort_index()
+    daily_ret  = daily_wide.pct_change()
 
-    window_prices = daily_wide.loc[valid_idx[-(LOOKBACK_DAYS + 1):]]
+    # Mask circuit breaker days per stock (|ret| >= 5%)
+    clean_ret = daily_ret.copy()
+    clean_ret[clean_ret.abs() >= CIRCUIT_BREAKER_PCT] = np.nan
 
-    signals            = {}
-    days_excluded_list = []
+    all_dates = daily_ret.index.values
+    records   = {}
 
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col not in daily_wide.columns:
+    for month_end in monthly_index:
+        mask         = all_dates <= np.datetime64(month_end)
+        window_dates = all_dates[mask][-(LOOKBACK_DAYS + 1):]
+        if len(window_dates) < MIN_DAYS_AFTER_FILTER + 1:
             continue
 
-        px = window_prices[col].dropna()
-        if len(px) < 10:
-            continue
+        window = clean_ret.loc[window_dates]
+        # Count valid days per stock
+        valid_counts = window.notna().sum()
+        # Annualised vol
+        vol = window.std() * np.sqrt(252)
+        # Zero out stocks with too few clean days
+        vol[valid_counts < MIN_DAYS_AFTER_FILTER] = np.nan
+        records[month_end] = vol
 
-        daily_ret  = px.pct_change().dropna()
-        mask       = daily_ret.abs() < CIRCUIT_BREAKER_PCT
-        n_excluded = (~mask).sum()
-        clean_ret  = daily_ret[mask]
-
-        days_excluded_list.append(n_excluded)
-
-        if len(clean_ret) < MIN_DAYS_AFTER_FILTER:
-            continue
-
-        vol = clean_ret.std() * np.sqrt(252)
-        if pd.notna(vol) and vol > 0:
-            signals[sym] = vol
-
-    avg_excluded = np.mean(days_excluded_list) if days_excluded_list else 0.0
-    return pd.Series(signals), avg_excluded
+    vol_matrix = pd.DataFrame(records).T
+    vol_matrix.index = pd.to_datetime(vol_matrix.index)
+    print(f"  Vol matrix shape: {vol_matrix.shape}")
+    return vol_matrix
 
 
 # ---------------------------------------------------------------------------
-# Next month returns — operates on wide daily close
-# ---------------------------------------------------------------------------
-def compute_next_month_returns(
-    daily_wide      : pd.DataFrame,
-    universe_symbols: list,
-    month_end       : pd.Timestamp,
-    next_month_end  : pd.Timestamp,
-    sym_map         : dict,
-) -> pd.Series:
-    idx       = daily_wide.index
-    curr_days = idx[(idx <= month_end) &
-                    (idx >= month_end - pd.offsets.MonthBegin(1))]
-    next_days = idx[(idx <= next_month_end) & (idx > month_end)]
-
-    if curr_days.empty or next_days.empty:
-        return pd.Series(dtype=float)
-
-    t_end  = curr_days[-1]
-    t1_end = next_days[-1]
-
-    returns = {}
-    for sym in universe_symbols:
-        col = sym_map.get(sym, sym)
-        if col not in daily_wide.columns:
-            continue
-        p_t  = daily_wide.loc[t_end,  col]
-        p_t1 = daily_wide.loc[t1_end, col]
-        if pd.notna(p_t) and pd.notna(p_t1) and p_t > 0:
-            returns[sym] = (p_t1 / p_t) - 1
-
-    return pd.Series(returns)
-
-
-# ---------------------------------------------------------------------------
-# Backtest loop
+# Backtest loop — vectorized
 # ---------------------------------------------------------------------------
 def run_backtest(
-    daily_wide  : pd.DataFrame,
-    prices_long : pd.DataFrame,
-    universe_df : pd.DataFrame,
-    sym_map     : dict,
-    start       : str = BACKTEST_START,
-    end         : str = BACKTEST_END,
+    prices_long  : pd.DataFrame,
+    monthly_px   : pd.DataFrame,
+    return_matrix: pd.DataFrame,
+    vol_matrix   : pd.DataFrame,
+    adtv_matrix  : pd.DataFrame,
+    universe_df  : pd.DataFrame,
+    sym_map      : dict,
 ) -> tuple:
-    periods = pd.period_range(start=start, end=end, freq="M")
+
+    rev_map     = {v: k for k, v in sym_map.items()}
+    periods     = pd.period_range(start=BACKTEST_START, end=BACKTEST_END, freq="M")
+    valid_dates = [
+        p.to_timestamp(how="end").normalize()
+        for p in periods
+        if p.to_timestamp(how="end").normalize() in monthly_px.index
+    ]
 
     records        = []
     signal_records = []
+    idx            = monthly_px.index
 
-    for i, period in enumerate(periods):
-        month_end = period.to_timestamp(how="end").normalize()
-
-        if i + 1 >= len(periods):
+    print(f"  Looping over {len(valid_dates)} months ...")
+    for i, date in enumerate(valid_dates):
+        pos = idx.get_loc(date)
+        if pos >= len(idx) - 1:
             continue
-        next_month_end = periods[i + 1].to_timestamp(how="end").normalize()
+        next_month_end = idx[pos + 1]
 
-        universe = get_clean_universe(month_end, prices_long, universe_df, sym_map)
-        if not universe:
-            continue
-
-        signal, avg_excluded = compute_lowvol_signal(daily_wide, universe, month_end, sym_map)
-
-        if len(signal) < MIN_STOCKS:
-            print(f"  SKIP {period}: only {len(signal)} stocks with signal")
+        # Universe
+        pit = get_pit_universe(date, universe_df)
+        if not pit:
             continue
 
+        # ADTV filter
+        threshold = get_adtv_threshold(date)
+        if date not in adtv_matrix.index:
+            continue
+        adtv_row  = adtv_matrix.loc[date]
+        pit_cols  = [sym_map.get(s, s) for s in pit]
+        pit_cols  = [c for c in pit_cols if c in adtv_row.index]
+        adtv_pass = adtv_row[pit_cols].dropna()
+        adtv_pass = adtv_pass[adtv_pass >= threshold].index.tolist()
+
+        if len(adtv_pass) < MIN_STOCKS:
+            continue
+
+        # Vol lookup
+        if date not in vol_matrix.index:
+            continue
+        vol_row = vol_matrix.loc[date, adtv_pass].dropna()
+        vol_row = vol_row[vol_row > 0]
+
+        if len(vol_row) < MIN_STOCKS:
+            print(f"  SKIP {date.strftime('%Y-%m')}: only {len(vol_row)} stocks with vol signal")
+            continue
+
+        # Save signals
         if SAVE_SIGNALS:
-            pct = 1 - signal.rank(pct=True)
-            for sym, raw in signal.items():
+            pct = 1 - vol_row.rank(pct=True)
+            for col, raw in vol_row.items():
+                sym = rev_map.get(col, col)
                 signal_records.append({
                     "nse_ticker" : sym,
-                    "date"       : month_end,
+                    "date"       : date,
                     "signal"     : float(raw),
-                    "percentile" : float(pct[sym]),
+                    "percentile" : float(pct[col] if not hasattr(pct[col], "__len__") else pct[col].iloc[0]),
                 })
 
-        long_thresh  = signal.quantile(LONG_PCTILE)
-        short_thresh = signal.quantile(SHORT_PCTILE)
-        long_stocks  = signal[signal <= long_thresh].index.tolist()
-        short_stocks = signal[signal >= short_thresh].index.tolist()
+        # Long / short
+        long_thresh  = vol_row.quantile(LONG_PCTILE)
+        short_thresh = vol_row.quantile(SHORT_PCTILE)
+        long_cols    = vol_row[vol_row <= long_thresh].index.tolist()
+        short_cols   = vol_row[vol_row >= short_thresh].index.tolist()
 
-        if not long_stocks or not short_stocks:
+        if not long_cols or not short_cols:
             continue
 
-        next_returns = compute_next_month_returns(
-            daily_wide, universe, month_end, next_month_end, sym_map
-        )
-        if next_returns.empty:
+        # Returns
+        if next_month_end not in return_matrix.index:
             continue
+        long_rets  = return_matrix.loc[next_month_end, long_cols].dropna()
+        short_rets = return_matrix.loc[next_month_end, short_cols].dropna()
 
-        long_rets  = [next_returns[s] for s in long_stocks  if s in next_returns]
-        short_rets = [next_returns[s] for s in short_stocks if s in next_returns]
-
-        if not long_rets or not short_rets:
+        if long_rets.empty or short_rets.empty:
             continue
 
         records.append({
-            "date"             : month_end,
-            "lowvol_return"    : np.mean(long_rets) - np.mean(short_rets),
-            "long_return"      : np.mean(long_rets),
-            "short_return"     : np.mean(short_rets),
-            "long_count"       : len(long_rets),
-            "short_count"      : len(short_rets),
-            "universe_size"    : len(signal),
-            "avg_days_excluded": round(avg_excluded, 2),
+            "date"          : next_month_end,
+            "lowvol_return" : long_rets.mean() - short_rets.mean(),
+            "long_return"   : long_rets.mean(),
+            "short_return"  : short_rets.mean(),
+            "long_count"    : len(long_rets),
+            "short_count"   : len(short_rets),
+            "universe_size" : len(vol_row),
         })
 
     df = pd.DataFrame(records)
@@ -253,16 +268,25 @@ def main():
     prices_long = load_prices_long(PRICE_FILE)
     print(f"  Prices shape: {prices_long.shape}")
 
-    print("Building wide daily close ...")
-    daily_wide = build_daily_wide(prices_long)
-    print(f"  Wide daily shape: {daily_wide.shape}")
+    print("Building monthly close prices ...")
+    monthly_px = build_monthly_close(prices_long)
+    print(f"  Monthly shape: {monthly_px.shape}")
+
+    print("Building return matrix ...")
+    return_matrix = monthly_px.pct_change()
 
     print("Building point-in-time universe lookup ...")
     universe_df = build_universe_lookup(CONSTITUENT_CSV)
     print(f"  {len(universe_df)} rebalance snapshots loaded")
 
+    adtv_matrix = build_adtv_matrix(prices_long, monthly_px.index)
+    vol_matrix  = build_vol_matrix(prices_long, monthly_px.index)
+
     print(f"\nRunning backtest: {BACKTEST_START} to {BACKTEST_END} ...")
-    results, signal_records = run_backtest(daily_wide, prices_long, universe_df, sym_map)
+    results, signal_records = run_backtest(
+        prices_long, monthly_px, return_matrix, vol_matrix,
+        adtv_matrix, universe_df, sym_map
+    )
 
     if results.empty:
         print("ERROR: no results produced")
@@ -279,21 +303,21 @@ def main():
     print(f"\n{'='*50}")
     print(f"LOWVOL FACTOR RESULTS ({BACKTEST_START} to {BACKTEST_END})")
     print(f"{'='*50}")
-    print(f"  Months              : {len(results)}")
-    print(f"  Ann. return         : {ann_ret*100:.2f}%")
-    print(f"  Ann. volatility     : {ann_vol*100:.2f}%")
-    print(f"  Sharpe ratio        : {sharpe:.3f}")
-    print(f"  Max drawdown        : {drawdown*100:.2f}%")
-    print(f"  Hit rate            : {hit_rate*100:.1f}%")
-    print(f"  Avg universe        : {results['universe_size'].mean():.0f} stocks")
-    print(f"  Avg long count      : {results['long_count'].mean():.0f}")
-    print(f"  Avg short count     : {results['short_count'].mean():.0f}")
-    print(f"  Avg days excluded   : {results['avg_days_excluded'].mean():.1f} per stock/month")
+    print(f"  Months          : {len(results)}")
+    print(f"  Ann. return     : {ann_ret*100:.2f}%")
+    print(f"  Ann. volatility : {ann_vol*100:.2f}%")
+    print(f"  Sharpe ratio    : {sharpe:.3f}")
+    print(f"  Max drawdown    : {drawdown*100:.2f}%")
+    print(f"  Hit rate        : {hit_rate*100:.1f}%")
+    print(f"  Avg universe    : {results['universe_size'].mean():.0f} stocks")
+    print(f"  Avg long count  : {results['long_count'].mean():.0f}")
+    print(f"  Avg short count : {results['short_count'].mean():.0f}")
 
-    print(f"\nFirst 5 rows:")
-    print(results.head().to_string())
-    print(f"\nLast 5 rows:")
-    print(results.tail().to_string())
+    print(f"\nAround COVID (date = month return was earned):")
+    covid = results.loc[
+        results.index >= pd.Timestamp("2020-01-01")
+    ].head(7)[["lowvol_return", "long_return", "short_return"]]
+    print(covid.to_string())
 
     results.to_parquet(OUTPUT_FILE)
     print(f"\nSaved -> {OUTPUT_FILE}")
