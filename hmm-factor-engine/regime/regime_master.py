@@ -58,6 +58,7 @@ INDEX_PY          = REGIME_DIR / "liquidity_risk_index.py"
 NARRATIVE_PY      = REGIME_DIR / "liquidity_risk_narrative.py"
 FORWARD_PY        = REGIME_DIR / "hmm_forward_algo.py"
 PDF_PY            = REGIME_DIR / "build_regime_pdf.py"
+HTML_PDF_PY       = REGIME_DIR / "build_regime_html_pdf.py"
 
 # Parquets
 PRICES_PQ    = DATA_DIR / "prices_hmm_daily.parquet"
@@ -560,6 +561,17 @@ def step_5_pdf(run_date, verbose=True):
     return out_path
 
 
+def step_5b_html_pdf(run_date, verbose=True):
+    section("STEP 5b -- Design PDF Report")
+    html_mod     = load_module("build_regime_html_pdf", HTML_PDF_PY)
+    consolidated = html_mod.load_consolidated(run_date)
+    data         = html_mod.transform(consolidated)
+    out_path     = REGIME_DATA / f"regime_report_design_{run_date}.pdf"
+    html_mod.render(data, html_mod.TEMPLATE, out_path)
+    print(f"  OK -- Design PDF saved -> {out_path.name}")
+    return out_path
+
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 
 def parse_args():
@@ -601,8 +613,8 @@ def main():
         # Step 4: combine
         step_4_combine(narrative_paths, hmm_result)
 
-        # Step 5: PDF
-        step_5_pdf(run_date, verbose=verbose)
+        # Step 5: Design PDF
+        step_5b_html_pdf(run_date, verbose=verbose)
 
     except Exception as e:
         print(f"\nFATAL ERROR: {e}")
