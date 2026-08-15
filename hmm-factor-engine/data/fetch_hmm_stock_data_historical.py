@@ -14,11 +14,14 @@ Union of current members from the 4 index symbol CSVs:
 Behaviour
 ---------
   - Incremental: fetches only new dates since last saved date
-  - Maintains rolling 30-month window: drops rows older than today - 30 months
-  - Corporate action check: weekly drop >40% + volume spike >40%
-    -> if detected: refetch full price history + shares_outstanding for that symbol
-    -> if still flagged after refetch: drop permanently to corporate_action_flags.parquet
-  - shares_outstanding: fetched only on first run or corporate action detection
+  - Maintains rolling 240-month window: drops rows older than today - 240 months
+  - Corporate action check: 1-day drop >40% + volume spike >40% (last 24 months only)
+    -> if detected: refetch full price history for that symbol
+    -> if specific bad date still present after refetch: null out that row only
+    -> bad (symbol, date) pairs saved to corporate_action_flags.parquet
+    -> symbol is NEVER permanently excluded — only bad rows are nulled
+  - On load: bad dates from flags file are re-applied (nulled) automatically
+  - shares_outstanding: fetched only on first run or for new symbols
     -> saved to shares_outstanding.parquet as static lookup
   - New symbols: fetched from WINDOW_START, shares_outstanding fetched too
 
@@ -31,7 +34,7 @@ Output
   hmm-factor-engine/data/shares_outstanding.parquet
     symbol | shares_outstanding
   hmm-factor-engine/data/corporate_action_flags.parquet
-    symbol | reason
+    symbol | bad_date | reason
 
 Usage
 -----
@@ -55,8 +58,9 @@ BATCH_SIZE       = 20
 SLEEP_BETWEEN    = 2
 RETRY_SLEEP      = 5
 
-WEEKLY_DROP_THRESHOLD  = 0.40
-VOLUME_SPIKE_THRESHOLD = 0.40
+DAILY_DROP_THRESHOLD   = 0.40   # 1-day close-to-close drop; >40% = data error given NSE circuits
+VOLUME_SPIKE_THRESHOLD = 0.40   # volume must also spike to confirm
+CA_LOOKBACK_MONTHS     = 24     # only check last 24 months — ignores genuine historical crashes
 
 UNIVERSE_FILES = [
     BASE / "nifty500_symbols.csv",
@@ -78,9 +82,60 @@ WINDOW_START_STR = WINDOW_START.strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
+# Flags helpers
+# ---------------------------------------------------------------------------
+def load_flags() -> pd.DataFrame:
+    """
+    Load corporate_action_flags.parquet.
+    Schema: symbol | bad_date | reason
+    Returns empty DataFrame with correct schema if file missing or old schema.
+    """
+    schema = pd.DataFrame(columns=["symbol", "bad_date", "reason"])
+    if not FLAGS_FILE.exists():
+        return schema
+    df = pd.read_parquet(FLAGS_FILE)
+    df.columns = df.columns.str.strip().str.lower()
+    # Migrate old schema (symbol | reason only) to new schema
+    if "bad_date" not in df.columns:
+        print("  Migrating corporate_action_flags.parquet to new schema (adding bad_date)...")
+        df["bad_date"] = pd.NaT
+        df = df[["symbol", "bad_date", "reason"]]
+        df.to_parquet(FLAGS_FILE, index=False)
+        print(f"  Migrated {len(df)} rows")
+    df["bad_date"] = pd.to_datetime(df["bad_date"])
+    return df
+
+
+def save_flags(flags: pd.DataFrame) -> None:
+    flags = flags.drop_duplicates(subset=["symbol", "bad_date"], keep="last")
+    flags.to_parquet(FLAGS_FILE, index=False)
+    print(f"  Saved corporate_action_flags.parquet — {len(flags)} bad (symbol, date) pairs")
+
+
+def apply_flags(prices: pd.DataFrame, flags: pd.DataFrame) -> pd.DataFrame:
+    """
+    Null out close/open/high/low/volume for any (symbol, bad_date) in flags.
+    Symbol stays in the dataframe — only the bad row is nulled.
+    """
+    if flags.empty:
+        return prices
+    bad = flags.dropna(subset=["bad_date"])
+    if bad.empty:
+        return prices
+    prices = prices.copy()
+    for _, row in bad.iterrows():
+        mask = (prices["symbol"] == row["symbol"]) & (prices["date"] == row["bad_date"])
+        if mask.any():
+            prices.loc[mask, ["open", "high", "low", "close", "volume"]] = None
+    nulled = len(bad)
+    print(f"  Applied {nulled} bad-date null(s) from flags file")
+    return prices
+
+
+# ---------------------------------------------------------------------------
 # Step 1 — Load universe
 # ---------------------------------------------------------------------------
-def load_universe() -> list[str]:
+def load_universe() -> list:
     all_symbols = set()
     for f in UNIVERSE_FILES:
         df = pd.read_csv(f)
@@ -96,7 +151,11 @@ def load_universe() -> list[str]:
 # ---------------------------------------------------------------------------
 # Step 2 — Load existing data
 # ---------------------------------------------------------------------------
-def load_existing_prices() -> pd.DataFrame:
+def load_existing_prices(flags: pd.DataFrame) -> pd.DataFrame:
+    """
+    Load prices parquet and re-apply bad-date nulls from flags.
+    No symbol is excluded — only specific bad rows are nulled.
+    """
     if PRICE_FILE.exists():
         df = pd.read_parquet(PRICE_FILE)
         df.columns = df.columns.str.strip().str.lower()
@@ -104,6 +163,7 @@ def load_existing_prices() -> pd.DataFrame:
         print(f"  Existing prices: {df.shape[0]} rows, "
               f"{df['symbol'].nunique()} symbols, "
               f"{df['date'].min().date()} -> {df['date'].max().date()}")
+        df = apply_flags(df, flags)
         return df
     print("  No existing prices found — full fetch for all symbols")
     return pd.DataFrame()
@@ -122,7 +182,7 @@ def load_existing_shares() -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Step 3 — Fetch OHLCV in batches, return long format
 # ---------------------------------------------------------------------------
-def fetch_ohlcv(tickers_ns: list[str], start: str, end: str) -> pd.DataFrame:
+def fetch_ohlcv(tickers_ns: list, start: str, end: str) -> pd.DataFrame:
     raw = yf.download(
         tickers_ns,
         start=start,
@@ -159,29 +219,52 @@ def fetch_ohlcv(tickers_ns: list[str], start: str, end: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Step 4 — Corporate action detection
 # ---------------------------------------------------------------------------
-def detect_corporate_actions(prices: pd.DataFrame) -> list[str]:
+def detect_corporate_actions(prices: pd.DataFrame) -> list:
+    """
+    Detect likely yfinance data errors in the last 24 months.
+
+    Logic:
+      - 1-day close-to-close drop >40%: NSE circuits cap moves at 10-20%
+        for large caps, so a 40% single-day drop is almost certainly a
+        data error, not a real market move.
+      - Volume spike >40% as confirmation.
+      - Only checks last 24 months — genuine crashes (2008, 2020) are
+        outside this window and will never be flagged.
+
+    Returns list of (symbol, bad_date) tuples.
+    """
+    lookback_cutoff = pd.Timestamp(date.today() - relativedelta(months=CA_LOOKBACK_MONTHS))
     flagged = []
+
     for sym, grp in prices.groupby("symbol"):
         grp = grp.sort_values("date").set_index("date")
+        grp = grp[grp.index >= lookback_cutoff]
         if len(grp) < 10:
             continue
-        weekly_ret   = grp["close"].pct_change(5)
-        vol_roll     = grp["volume"].rolling(5).sum()
-        vol_ratio    = (vol_roll / vol_roll.shift(5)) - 1
-        flag         = (weekly_ret < -WEEKLY_DROP_THRESHOLD) & (vol_ratio > VOLUME_SPIKE_THRESHOLD)
+
+        # Skip rows already nulled by flags
+        grp = grp.dropna(subset=["close"])
+
+        daily_ret = grp["close"].pct_change(1)
+        vol_roll  = grp["volume"].rolling(5).sum()
+        vol_ratio = (vol_roll / vol_roll.shift(5)) - 1
+        flag      = (daily_ret < -DAILY_DROP_THRESHOLD) & (vol_ratio > VOLUME_SPIKE_THRESHOLD)
+
         if flag.any():
-            n_flags   = flag.sum()
-            worst_ret = weekly_ret[flag].min()
-            flagged.append(sym)
-            print(f"  CORP ACTION FLAG: {sym} — {n_flags} week(s), "
-                  f"worst weekly ret: {worst_ret:.1%}")
+            bad_dates = grp.index[flag].tolist()
+            for bad_date in bad_dates:
+                ret = daily_ret[bad_date]
+                print(f"  CORP ACTION FLAG: {sym}  {bad_date.date()}  "
+                      f"1-day ret={ret:.1%}")
+                flagged.append((sym, bad_date))
+
     return flagged
 
 
 # ---------------------------------------------------------------------------
 # Step 5 — Fetch shares_outstanding
 # ---------------------------------------------------------------------------
-def fetch_shares_outstanding(symbols: list[str]) -> pd.DataFrame:
+def fetch_shares_outstanding(symbols: list) -> pd.DataFrame:
     rows = []
     for sym in symbols:
         try:
@@ -198,14 +281,15 @@ def fetch_shares_outstanding(symbols: list[str]) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Step 6 — Build and save wide volume parquet from long price dataframe
+# Step 6 — Build and save wide volume parquet
 # ---------------------------------------------------------------------------
 def save_volume_parquet(combined: pd.DataFrame) -> None:
     volume = (
         combined[["symbol", "date", "volume"]]
+        .dropna(subset=["volume"])
         .pivot(index="date", columns="symbol", values="volume")
     )
-    volume.index.name  = None
+    volume.index.name   = None
     volume.columns.name = None
     volume.to_parquet(VOLUME_FILE)
     print(f"  Saved volume : {volume.shape} -> {VOLUME_FILE.name}")
@@ -229,11 +313,12 @@ def main():
     print("\n[1/6] Loading universe...")
     tickers    = load_universe()
     tickers_ns = [f"{t}.NS" for t in tickers]
-    total      = len(tickers_ns)
 
-    # ── Load existing data ────────────────────────────────────────
-    print("\n[2/6] Loading existing data...")
-    existing_prices = load_existing_prices()
+    # ── Load flags ────────────────────────────────────────────────
+    print("\n[2/6] Loading flags and existing data...")
+    flags           = load_flags()
+    print(f"  Bad date flags loaded: {len(flags)}")
+    existing_prices = load_existing_prices(flags)
     existing_shares = load_existing_shares()
 
     # ── Determine fetch window and new symbols ────────────────────
@@ -303,7 +388,7 @@ def main():
             else:
                 print(f"    STILL EMPTY — skipping {sym}")
 
-    # ── Merge ─────────────────────────────────────────────────────
+    # ── Merge + corporate action check ────────────────────────────
     print("\n[5/6] Corporate action check + merge...")
     if all_parts:
         new_data = pd.concat(all_parts, ignore_index=True)
@@ -316,14 +401,17 @@ def main():
 
         combined = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-        # Corporate action detection
+        # Corporate action detection — returns (symbol, bad_date) pairs
         print("  Running corporate action check...")
-        flagged = detect_corporate_actions(combined)
+        flagged_pairs = detect_corporate_actions(combined)
 
-        if flagged:
-            print(f"  {len(flagged)} symbol(s) flagged — refetching full history...")
+        if flagged_pairs:
+            unique_syms = list({s for s, _ in flagged_pairs})
+            print(f"  {len(flagged_pairs)} bad date(s) across {len(unique_syms)} symbol(s) — refetching...")
+
+            # Refetch full history for affected symbols
             refetch_parts = []
-            for sym in flagged:
+            for sym in unique_syms:
                 time.sleep(RETRY_SLEEP)
                 df = fetch_ohlcv([f"{sym}.NS"], WINDOW_START_STR, END_DATE)
                 if not df.empty:
@@ -332,43 +420,37 @@ def main():
 
             if refetch_parts:
                 refetch_data = pd.concat(refetch_parts, ignore_index=True)
-                combined     = combined[~combined["symbol"].isin(flagged)]
+                combined     = combined[~combined["symbol"].isin(unique_syms)]
                 combined     = pd.concat([combined, refetch_data], ignore_index=True)
                 combined     = combined.sort_values(["symbol", "date"]).reset_index(drop=True)
 
-            # Second check — if still flagged, yfinance didn't fix it
-            print("  Re-checking corporate actions after refetch...")
+            # Re-check after refetch — if bad date still present, null it out
+            print("  Re-checking after refetch...")
             still_flagged = detect_corporate_actions(
-                combined[combined["symbol"].isin(flagged)]
+                combined[combined["symbol"].isin(unique_syms)]
             )
 
             if still_flagged:
-                print(f"  {len(still_flagged)} symbol(s) still flagged — dropping permanently:")
-                print(f"  {still_flagged}")
-                new_flags = pd.DataFrame({"symbol": still_flagged, "reason": "yfinance_unadjusted"})
-                if FLAGS_FILE.exists():
-                    existing_flags = pd.read_parquet(FLAGS_FILE)
-                    new_flags = pd.concat([existing_flags, new_flags]).drop_duplicates(subset=["symbol"], keep="last")
-                new_flags.to_parquet(FLAGS_FILE, index=False)
-                print(f"  Saved -> corporate_action_flags.parquet")
-                combined = combined[~combined["symbol"].isin(still_flagged)]
-                flagged  = [s for s in flagged if s not in still_flagged]
-            else:
-                print("  All refetched symbols look clean.")
+                print(f"  {len(still_flagged)} bad date(s) persist after refetch — nulling rows:")
+                for sym, bad_date in still_flagged:
+                    mask = (combined["symbol"] == sym) & (combined["date"] == bad_date)
+                    combined.loc[mask, ["open","high","low","close","volume"]] = None
+                    print(f"    Nulled: {sym}  {bad_date.date()}")
 
-            # Refetch shares_outstanding for remaining clean flagged symbols
-            if flagged:
-                print(f"  Refetching shares_outstanding for {len(flagged)} flagged symbols...")
-                new_shares = fetch_shares_outstanding(flagged)
-                if not existing_shares.empty:
-                    existing_shares = existing_shares[~existing_shares["symbol"].isin(flagged)]
-                    existing_shares = pd.concat([existing_shares, new_shares], ignore_index=True)
-                else:
-                    existing_shares = new_shares
+                # Save to flags file
+                new_flag_rows = pd.DataFrame([
+                    {"symbol": s, "bad_date": d, "reason": "yfinance_unadjusted"}
+                    for s, d in still_flagged
+                ])
+                updated_flags = pd.concat([flags, new_flag_rows], ignore_index=True)
+                save_flags(updated_flags)
+            else:
+                print("  All flagged symbols look clean after refetch.")
+
         else:
             print("  No corporate action artifacts detected.")
 
-        # Drop rows outside rolling 30-month window
+        # Drop rows outside rolling window
         cutoff = pd.Timestamp(WINDOW_START)
         before = len(combined)
         combined = combined[combined["date"] >= cutoff]
@@ -381,13 +463,12 @@ def main():
         print(f"  Date range   : {combined['date'].min().date()} -> {combined['date'].max().date()}")
         print(f"  Symbols      : {combined['symbol'].nunique()}")
 
-        # Save wide volume parquet in sync with price parquet
         save_volume_parquet(combined)
 
     else:
         print("  No new price data fetched.")
 
-    # ── Shares outstanding — fetch for missing symbols ────────────
+    # ── Shares outstanding ────────────────────────────────────────
     print("\n[6/6] Shares outstanding...")
     known_syms   = set(existing_shares["symbol"].tolist()) if not existing_shares.empty else set()
     missing_syms = [t for t in tickers if t not in known_syms]

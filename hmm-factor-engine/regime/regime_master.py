@@ -57,6 +57,7 @@ FETCH_INDICES_PY  = DATA_DIR  / "fetch_hmm_nifty_indices_data.py"
 INDEX_PY          = REGIME_DIR / "liquidity_risk_index.py"
 NARRATIVE_PY      = REGIME_DIR / "liquidity_risk_narrative.py"
 FORWARD_PY        = REGIME_DIR / "hmm_forward_algo.py"
+PDF_PY            = REGIME_DIR / "build_regime_pdf.py"
 
 # Parquets
 PRICES_PQ    = DATA_DIR / "prices_hmm_daily.parquet"
@@ -547,6 +548,18 @@ def print_narrative_block(univ, narrative_date, narr, hmm_is_current, hmm_lag_no
     print(f"\n{bar}\n")
 
 
+# ── Step 5: PDF ──────────────────────────────────────────────────────────────
+
+def step_5_pdf(run_date, verbose=True):
+    section("STEP 5 -- PDF Report")
+    pdf_mod = load_module("build_regime_pdf", PDF_PY)
+    _, consolidated = pdf_mod.load_consolidated(run_date)
+    out_path = REGIME_DATA / f"regime_report_{run_date}.pdf"
+    pdf_mod.build_pdf(consolidated, out_path)
+    print(f"  OK -- PDF saved -> {out_path.name}")
+    return out_path
+
+
 # ── Args ──────────────────────────────────────────────────────────────────────
 
 def parse_args():
@@ -561,8 +574,9 @@ def parse_args():
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    args    = parse_args()
-    verbose = not args.quiet
+    args     = parse_args()
+    verbose  = not args.quiet
+    run_date = date.today().strftime("%Y-%m-%d")
 
     print(f"\n{'='*70}")
     print(f"  REGIME MASTER  |  {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
@@ -586,6 +600,9 @@ def main():
 
         # Step 4: combine
         step_4_combine(narrative_paths, hmm_result)
+
+        # Step 5: PDF
+        step_5_pdf(run_date, verbose=verbose)
 
     except Exception as e:
         print(f"\nFATAL ERROR: {e}")
