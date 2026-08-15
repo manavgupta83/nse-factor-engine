@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NSE Regime Engine — Weekly Report</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&display=swap');
+  :root{
+    --color-bg:#f3f2f2; --color-text:#201e1d; --color-accent:#ec3013;
+    --color-accent-700:#ae1800; --color-accent-100:#fff2ef; --color-accent-800:#7c1405;
+    --color-neutral-100:#f8f4f4; --color-neutral-800:#444141;
+    --color-divider:rgba(32,30,29,0.4);
+    --font-heading:"Archivo",system-ui,sans-serif; --font-body:"Archivo",system-ui,sans-serif;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  body{margin:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:15px;line-height:1.55;padding:0.85in}
+  h1,h2,h3,h4,h5,h6{font-family:var(--font-heading);font-weight:800;line-height:1.12;letter-spacing:-0.015em;margin:0 0 8px}
+  h1{font-size:42px} h2{font-size:32px} h6{font-size:13px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(32,30,29,0.55)}
+  p{margin:0 0 12px}
+  .hr{height:2px;border:0;margin:16px 0;background:var(--color-divider)}
+  .tag{display:inline-flex;align-items:center;font-size:11px;letter-spacing:0.02em;padding:3px 10px}
+  .tag-accent{background:var(--color-accent-100);color:var(--color-accent-800)}
+  .tag-neutral{background:var(--color-neutral-100);color:var(--color-neutral-800)}
+  .tag-outline{border:1px solid var(--color-accent);color:var(--color-accent)}
+  .table{width:100%;border-collapse:collapse;font-size:14px}
+  .table th{text-align:left;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:rgba(32,30,29,0.6);padding:8px;border-bottom:2px solid var(--color-divider)}
+  .table td{padding:8px;border-bottom:1px solid var(--color-divider)}
+  .muted{color:rgba(32,30,29,0.55)}
+  .index-section{margin-top:28px}
+  @media print{ body{padding:0.85in} }
+</style>
+</head>
+<body>
+
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--color-divider);padding-bottom:16px;margin-bottom:24px">
+    <div>
+      <h1 style="margin-bottom:4px">NSE Regime Engine</h1>
+      <p style="margin:0;font-size:16px" class="muted">Weekly Liquidity, Risk &amp; Regime Report</p>
+    </div>
+    <p style="margin:0;font-size:13px" class="muted">Generated {{ generated_date }}</p>
+  </div>
+
+  <section style="margin-bottom:32px">
+    <div style="display:grid;grid-template-columns:1fr 2fr;gap:32px;margin-bottom:20px">
+      <div>
+        <h6>HMM Regime</h6>
+        <div style="font-family:var(--font-heading);font-weight:800;font-size:36px;color:var(--color-accent-700);line-height:1">{{ regime.signal }}</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <span class="tag tag-accent">{{ regime.conviction }}</span>
+          <span class="tag tag-neutral">{{ regime.month }}</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+        <div style="border-left:2px solid var(--color-divider);padding-left:14px">
+          <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase" class="muted">Bull Probability</div>
+          <div style="font-family:var(--font-heading);font-weight:800;font-size:28px">{{ regime.bull_probability }}%</div>
+        </div>
+        <div style="border-left:2px solid var(--color-divider);padding-left:14px">
+          <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase" class="muted">Choppy Probability</div>
+          <div style="font-family:var(--font-heading);font-weight:800;font-size:28px">{{ regime.choppy_probability }}%</div>
+        </div>
+        <div style="border-left:2px solid var(--color-divider);padding-left:14px">
+          <div style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase" class="muted">Crisis Probability</div>
+          <div style="font-family:var(--font-heading);font-weight:800;font-size:28px">{{ regime.crisis_probability }}%</div>
+        </div>
+      </div>
+    </div>
+    <h6>Regime Synthesis</h6>
+    <p style="font-size:15px;max-width:720px">{{ regime.synthesis }}</p>
+  </section>
+
+  <hr class="hr">
+
+  {% for idx in indices %}
+  <section class="index-section">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+      <h2 style="margin:0">{{ idx.name }}</h2>
+      <p style="margin:0;font-size:12px" class="muted">Liquidity &amp; Risk | {{ idx.as_of }}</p>
+    </div>
+    <p style="font-size:14px;max-width:720px;margin-bottom:20px">{{ idx.overall_assessment }}</p>
+
+    <h6>Risk Measures</h6>
+    <table class="table" style="margin-bottom:24px">
+      <thead><tr><th style="width:16%">Measure</th><th style="width:12%">Tier</th><th>Reading</th></tr></thead>
+      <tbody>
+        {% for row in idx.risk_measures %}
+        <tr><td>{{ row.measure }}</td><td><span class="tag {{ row.tier|tier_class }}">{{ row.tier }}</span></td><td>{{ row.reading }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h6>Liquidity Measures</h6>
+    <table class="table">
+      <thead><tr><th style="width:16%">Measure</th><th style="width:12%">Tier</th><th>Reading</th></tr></thead>
+      <tbody>
+        {% for row in idx.liquidity_measures %}
+        <tr><td>{{ row.measure }}</td><td><span class="tag {{ row.tier|tier_class }}">{{ row.tier }}</span></td><td>{{ row.reading }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endfor %}
+
+</body>
+</html>
