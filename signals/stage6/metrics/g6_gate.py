@@ -21,5 +21,6 @@ def apply_g6_gate(signals_df: pd.DataFrame) -> pd.DataFrame:
         (signals_df['in_universe'] == True) &
         (signals_df['weinstein_stage2'] == True) &
         (~signals_df['lottery_class'].isin(EXCLUDED_LOTTERY_CLASSES)) &
-        (signals_df['alpha_12m1m_ew'] > 0)
+        (signals_df['alpha_12m1m_ew'] > 0) &
+        (signals_df['lower_circuit_hits_63d'] == 0)
     ].copy()
