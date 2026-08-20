@@ -6,9 +6,10 @@ Selection criteria (ALL must be True):
   2. weinstein_stage2 == True
   3. lottery_class NOT IN {LOTTERY, BORDER_LOTTERY, EXTREME_LOTTERY}
   4. alpha_12m1m_ew > 0
+  5. lower_circuit_hits_63d < 2
 
 Input : Stage 5 output dataframe (momentum_signals_final_{DDMMYYYY}.parquet)
-Output: filtered dataframe — only rows passing all 4 conditions
+Output: filtered dataframe — only rows passing all 5 conditions
 """
 
 import pandas as pd
@@ -22,5 +23,5 @@ def apply_g6_gate(signals_df: pd.DataFrame) -> pd.DataFrame:
         (signals_df['weinstein_stage2'] == True) &
         (~signals_df['lottery_class'].isin(EXCLUDED_LOTTERY_CLASSES)) &
         (signals_df['alpha_12m1m_ew'] > 0) &
-        (signals_df['lower_circuit_hits_63d'] == 0)
+        (signals_df['lower_circuit_hits_63d'] < 2)
     ].copy()

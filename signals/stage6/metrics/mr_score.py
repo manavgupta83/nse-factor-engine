@@ -15,9 +15,10 @@ Formula:
       1 / (1 - Weighted_Z)     if Weighted_Z <  0
 
 USE_G6_GATE flag:
-  1 (default) — apply G6 gate before scoring (weinstein_stage2,
-                lottery_class, alpha_12m1m_ew > 0, lower_circuit_hits_63d == 0)
+  1 (default) — apply G6 gate before scoring (via g6_gate.apply_g6_gate)
   0           — score all in_universe stocks, no gate
+
+Gate logic is defined in g6_gate.py — single source of truth.
 
 Vol note:
   Uses vol_252 (T-252 -> T, full 1-year window, no skip-month exclusion).
@@ -31,23 +32,9 @@ Output: full ranked dataframe (all in-universe stocks that pass gate and
 
 import numpy as np
 import pandas as pd
+from g6_gate import apply_g6_gate
 
 USE_G6_GATE = 1   # 0 = all in_universe; 1 = apply G6 gate before scoring
-
-G6_EXCLUDED_LOTTERY_CLASSES = ['LOTTERY', 'BORDER_LOTTERY', 'EXTREME_LOTTERY']
-
-
-def _apply_g6_gate(df: pd.DataFrame) -> pd.DataFrame:
-    mask = (
-        (df['weinstein_stage2'] == True) &
-        (~df['lottery_class'].isin(G6_EXCLUDED_LOTTERY_CLASSES)) &
-        (df['alpha_12m1m_ew'] > 0) &
-        (df['lower_circuit_hits_63d'] == 0)
-    )
-    out = df[mask].copy()
-    print(f"G6 gate applied: {len(df)} -> {len(out)} pass "
-          f"({len(df) - len(out)} dropped)")
-    return out
 
 
 def apply_mr_score(signals_df: pd.DataFrame) -> pd.DataFrame:
@@ -59,10 +46,13 @@ def apply_mr_score(signals_df: pd.DataFrame) -> pd.DataFrame:
     df = signals_df[signals_df['in_universe'] == True].copy()
     print(f"in_universe stocks: {len(df)}")
 
-    # Step 2: optionally apply G6 gate
+    # Step 2: optionally apply G6 gate (single source of truth: g6_gate.py)
     if USE_G6_GATE == 1:
         print("USE_G6_GATE=1 — applying G6 gate before scoring")
-        df = _apply_g6_gate(df)
+        n_before = len(df)
+        df = apply_g6_gate(df)
+        print(f"G6 gate applied: {n_before} -> {len(df)} pass "
+              f"({n_before - len(df)} dropped)")
     else:
         print("USE_G6_GATE=0 — scoring all in_universe stocks, no gate")
 
