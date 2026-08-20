@@ -1,7 +1,7 @@
 """
-Stage 7 — Momentum Ratio Scoring
+Stage 6 — Momentum Ratio Scoring (replaces c6_score.py)
 
-Formula (per spec):
+Formula:
   MR12 = ret_12m1m / vol_252
   MR6  = ret_6m1m  / vol_252
 
@@ -15,20 +15,18 @@ Formula (per spec):
       1 / (1 - Weighted_Z)     if Weighted_Z <  0
 
 USE_G6_GATE flag:
-  0 (default) — score all in_universe stocks, no gate filtering
-  1           — apply G6 gate before scoring (weinstein_stage2,
-                lottery_class, alpha_12m1m_ew > 0). Flip when needed.
+  1 (default) — apply G6 gate before scoring (weinstein_stage2,
+                lottery_class, alpha_12m1m_ew > 0, lower_circuit_hits_63d == 0)
+  0           — score all in_universe stocks, no gate
 
 Vol note:
   Uses vol_252 (T-252 -> T, full 1-year window, no skip-month exclusion).
-  vol_231 (skip-month) is used by sharpe_style/simple_vol_adj — not here.
 
 Input : Stage 5 signals dataframe
-Output: full ranked dataframe (ALL in-universe stocks that have valid inputs),
-        with columns: mr_12, mr_6, z_12, z_6, weighted_z,
-                      norm_momentum_score, mr_rank
-        No tier assignment here — that is done in mr_reconstitute.py
-        after applying the buffer zone + reconstitution logic.
+Output: full ranked dataframe (all in-universe stocks that pass gate and
+        have valid inputs), with columns: mr_12, mr_6, z_12, z_6,
+        weighted_z, norm_momentum_score, mr_rank
+        No tier assignment here — that is done in mr_reconstitute.py.
 """
 
 import numpy as np
@@ -43,7 +41,8 @@ def _apply_g6_gate(df: pd.DataFrame) -> pd.DataFrame:
     mask = (
         (df['weinstein_stage2'] == True) &
         (~df['lottery_class'].isin(G6_EXCLUDED_LOTTERY_CLASSES)) &
-        (df['alpha_12m1m_ew'] > 0)
+        (df['alpha_12m1m_ew'] > 0) &
+        (df['lower_circuit_hits_63d'] == 0)
     )
     out = df[mask].copy()
     print(f"G6 gate applied: {len(df)} -> {len(out)} pass "
