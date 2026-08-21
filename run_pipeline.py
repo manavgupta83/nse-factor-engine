@@ -180,6 +180,27 @@ def main():
     log(f"Log file: {RUN_LOG_PATH}")
     log("#" * 70)
 
+    # ── Mode selection prompt ──
+    print("\n" + "=" * 70)
+    print("NSE FACTOR ENGINE — PIPELINE MODE SELECTION")
+    print("=" * 70)
+    print("  1. REBALANCE — full pipeline, Stage 6 rebalances if >= 30 days")
+    print("  2. MONITOR   — full pipeline, Stage 6 prints current state only,")
+    print("                 nothing written")
+    print("=" * 70)
+    while True:
+        choice = input("\nEnter mode [1=REBALANCE / 2=MONITOR]: ").strip().lower()
+        if choice in ("1", "rebalance", "r"):
+            os.environ["STAGE6_MODE"] = "rebalance"
+            log("Pipeline mode: REBALANCE")
+            break
+        elif choice in ("2", "monitor", "m"):
+            os.environ["STAGE6_MODE"] = "monitor"
+            log("Pipeline mode: MONITOR")
+            break
+        else:
+            print("  Invalid — enter 1 or 2 (or r/m)")
+
     run_stage(
         "STAGE 1 — Universe & Liquidity",
         BASE / "universe" / "run_universe.py",
