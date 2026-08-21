@@ -38,7 +38,7 @@ SCRIPT_MAP = {
 REGISTRY_COLS = [
     'run_date', 'script', 'Variant', 'Description',
     'CAGR', 'BM CAGR', 'Alpha', 'Sharpe', 'Calmar', 'Max DD',
-    'Pct_Positive_Periods', 'Avg Turnover', 'Avg Universe',
+    'Pct_Positive_Periods', 'Avg Turnover',
     'NAV end (M)', 'Periods',
     'Ulcer_Index', 'Martin_Ratio',
     'Total_Positions', 'Winners', 'Losers', 'Win_Rate_Pct',
@@ -237,8 +237,6 @@ for fpath in summary_files:
             'Pct_Positive_Periods': row.get('Hit Rate',
                                     row.get('Pct_Positive_Periods', None)),
             'Avg Turnover'        : row.get('Avg Turnover', None),
-            'Avg Universe'        : row.get('Avg Universe',
-                                    row.get('Avg Universe', None)),
             'NAV end (M)'         : row.get('NAV end (M)', None),
             'Periods'             : row.get('Periods',
                                     row.get('Weeks', None)),
@@ -267,6 +265,11 @@ combined = combined.drop_duplicates(subset=['run_date', 'Variant'], keep='last')
 combined = combined.sort_values('NAV end (M)', ascending=False).reset_index(drop=True)
 
 # ── Write registry ─────────────────────────────────────────────────────────────
+# Drop legacy columns if present
+for _drop_col in ['Avg Universe']:
+    if _drop_col in combined.columns:
+        combined = combined.drop(columns=[_drop_col])
+
 combined.to_csv(REGISTRY, index=False)
 print(f'\nRegistry updated: {len(combined)} rows -> {REGISTRY}')
 
