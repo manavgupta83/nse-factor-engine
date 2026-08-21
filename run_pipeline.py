@@ -228,7 +228,7 @@ def main():
     )
 
     run_stage(
-        "STAGE 6 — Portfolio Selection (G6_C6)",
+        "STAGE 6 — Portfolio Selection (G6_MR Hybrid)",
         BASE / "signals" / "stage6" / "stage6_assemble.py",
     )
 

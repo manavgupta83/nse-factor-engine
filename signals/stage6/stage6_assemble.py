@@ -1,10 +1,20 @@
+import os
 """
-Stage 6 (production) — Portfolio Selection (G6_MR Hybrid | Monthly)
+Stage 6 (production) — Portfolio Selection (G6_MR Hybrid)
 
 Gate     : lower_circuit_hits_63d < 3  (g6_gate.py)
 Scoring  : MR vol-adjusted Z-score composite  (mr_score.py)
 Recon    : Hybrid Weinstein buffer zone  (mr_reconstitute.py)
-Cadence  : MONTHLY — skips if as_of_date is same month as last_rebalance_date
+
+Modes:
+  REBALANCE (default) : rebalances if >= 30 days since last_rebalance_date.
+                        Skips if < 30 days — no files written, no state changed.
+  MONITOR  (--monitor): always runs, never writes anything, prints current
+                        ranking state vs last rebalance for mid-month monitoring.
+
+Usage:
+  python3 stage6_assemble.py                      # rebalance mode
+  STAGE6_MODE=monitor python3 stage6_assemble.py  # monitor mode
 
 Reject tracker (signals/stage6/rejects_{DDMMYYYY}.csv):
   Combined log of:
@@ -12,7 +22,7 @@ Reject tracker (signals/stage6/rejects_{DDMMYYYY}.csv):
   2. Weinstein rejects   — holdings forced out by trend reversal
                          — fill-pool candidates blocked by trend reversal
 
-Output:
+Output (REBALANCE mode only):
   signals/stage6/portfolio_recommendations_{DDMMYYYY}.parquet
   signals/stage6/rejects_{DDMMYYYY}.csv
   portfolio/portfolio_state.parquet
@@ -24,6 +34,8 @@ import sys
 from pathlib import Path
 import pandas as pd
 
+MONITOR_MODE = os.environ.get("STAGE6_MODE", "").lower() == "monitor"
+
 BASE = "/home/ec2-user/nse-factor-engine/"
 sys.path.insert(0, BASE + "signals/stage6/metrics")
 from mr_score import apply_mr_score, USE_G6_GATE
@@ -32,6 +44,8 @@ from mr_reconstitute import apply_reconstitution, PORTFOLIO_N, BUFFER_ZONE, FORC
 PORTFOLIO_STATE_PATH  = Path(BASE + "portfolio/portfolio_state.parquet")
 PORTFOLIO_HISTORY_DIR = Path(BASE + "portfolio/portfolio_history/")
 STAGE6_OUTPUT_DIR     = Path(BASE + "signals/stage6/")
+
+REBALANCE_DAYS = 30   # minimum days between rebalances
 
 # ── Step 1: Resolve latest Stage 5 output ──
 signals_files = glob.glob(BASE + "signals/final/momentum_signals_final_*.parquet")
@@ -48,13 +62,14 @@ dated.sort(key=lambda x: pd.Timestamp(
 run_date_str, SIGNALS_PATH = dated[-1]
 
 print("=" * 70)
-print("STAGE 6 — Portfolio Selection (G6_MR Hybrid | Monthly)")
+print(f"STAGE 6 — Portfolio Selection (G6_MR Hybrid | "
+      f"{'MONITOR' if MONITOR_MODE else 'REBALANCE'})")
 print(f"USE_G6_GATE      : {USE_G6_GATE}  (lower_circuit_hits_63d < 3)")
 print(f"PORTFOLIO_N      : {PORTFOLIO_N}")
 print(f"BUFFER_ZONE      : {BUFFER_ZONE}")
 print(f"FORCED_IN_N      : {FORCED_IN_N}  (top 12 bypass Weinstein)")
 print(f"Weinstein        : applied in reconstitution (retained + fill)")
-print(f"Cadence          : MONTHLY")
+print(f"Rebalance guard  : {REBALANCE_DAYS} days")
 print(f"Signals run_date : {run_date_str}")
 print(f"Signals path     : {SIGNALS_PATH}")
 print("=" * 70)
@@ -77,31 +92,104 @@ if PORTFOLIO_STATE_PATH.exists():
     print(f"\nExisting portfolio  : {len(current_holdings)} holdings, "
           f"last_rebalance_date={stored_last_rebalance_date}")
 
-    if stored_last_rebalance_date is not None:
-        same_month = (
-            as_of_date.year  == stored_last_rebalance_date.year and
-            as_of_date.month == stored_last_rebalance_date.month
-        )
-        if same_month:
-            print(f"\nMonthly cadence: as_of_date ({as_of_date.date()}) is in "
-                  f"same month as last_rebalance_date "
-                  f"({stored_last_rebalance_date.date()}).")
+    if not MONITOR_MODE and stored_last_rebalance_date is not None:
+        days_since = (pd.Timestamp.now().normalize() - stored_last_rebalance_date).days
+        print(f"Days since last rebalance: {days_since}")
+        if days_since < REBALANCE_DAYS:
+            print(f"\n30-day guard: only {days_since} days since last rebalance "
+                  f"({stored_last_rebalance_date.date()}). "
+                  f"Need {REBALANCE_DAYS - days_since} more days.")
             print("Skipping — no files written, no state changed.")
+            print("Tip: run with --monitor to see current rankings without rebalancing.")
             sys.exit(0)
         else:
-            print(f"\nNew month detected: rebalancing "
-                  f"({stored_last_rebalance_date.date()} -> {as_of_date.date()})")
+            print(f"\n{days_since} days since last rebalance — proceeding.")
 else:
     current_holdings = set()
     print("\nNo existing portfolio state — first run, empty holdings.")
 
-# ── Step 3: Score with MR (returns ranked_df + gate reject_df) ──
+# ── Step 3: Score ──
 ranked_df, gate_rejects = apply_mr_score(signals)
 
-# ── Step 4: Hybrid reconstitution (returns output_df + top25 + weinstein rejects) ──
+# ── Step 4: Reconstitute ──
 ranked, top25_symbols, weinstein_rejects = apply_reconstitution(
     ranked_df, current_holdings
 )
+
+# ── MONITOR MODE — print and exit, nothing written ──
+if MONITOR_MODE:
+    print(f"\n{'='*70}")
+    print("MONITOR MODE — current state vs last rebalance (nothing written)")
+    print(f"{'='*70}")
+
+    # Current holdings rank status
+    print(f"\nCurrent holdings rank status ({len(current_holdings)} stocks):")
+    if current_holdings:
+        holding_rows = ranked_df[ranked_df['symbol'].isin(current_holdings)].copy()
+        holding_rows = holding_rows.sort_values('mr_rank')
+        cols = [c for c in ['mr_rank', 'symbol', 'norm_momentum_score',
+                             'weighted_z', 'weinstein_stage2', 'ret_12m1m']
+                if c in holding_rows.columns]
+        print(holding_rows[cols].to_string(index=False))
+
+        # Holdings that would be forced out
+        would_force_out = holding_rows[holding_rows['mr_rank'] > BUFFER_ZONE]
+        wein_fail = holding_rows[
+            (holding_rows['mr_rank'] <= BUFFER_ZONE) &
+            (holding_rows['weinstein_stage2'] != True)
+        ]
+        if len(would_force_out) > 0:
+            print(f"\n  ⚠ Would be forced out (rank > {BUFFER_ZONE}): "
+                  f"{sorted(would_force_out['symbol'].tolist())}")
+        if len(wein_fail) > 0:
+            print(f"  ⚠ Would be forced out (Weinstein failed): "
+                  f"{sorted(wein_fail['symbol'].tolist())}")
+
+    # What the portfolio would look like if rebalanced today
+    print(f"\nIf rebalanced TODAY — projected TOP_25:")
+    top25_df = ranked[ranked['tier'] == 'TOP_25'].copy()
+    if 'mr_rank' in top25_df.columns:
+        top25_df = top25_df.sort_values('mr_rank')
+    cols = [c for c in ['mr_rank', 'symbol', 'action', 'weinstein_stage2',
+                         'norm_momentum_score', 'ret_12m1m']
+            if c in top25_df.columns]
+    print(top25_df[cols].to_string(index=False))
+
+    # New entrants vs exits vs holds
+    projected_top25 = set(top25_df['symbol'])
+    would_buy  = projected_top25 - current_holdings
+    would_sell = current_holdings - projected_top25
+    would_hold = projected_top25 & current_holdings
+    print(f"\n  Would BUY  ({len(would_buy)})  : {sorted(would_buy)}")
+    print(f"  Would HOLD ({len(would_hold)}) : {sorted(would_hold)}")
+    print(f"  Would SELL ({len(would_sell)}) : {sorted(would_sell)}")
+
+    # Watchlist
+    watchlist = ranked[ranked['action'] == 'WATCHLIST']
+    if len(watchlist) > 0:
+        print(f"\nWATCHLIST (rank <= {BUFFER_ZONE}, {len(watchlist)} symbols):")
+        wl_cols = [c for c in ['mr_rank', 'symbol', 'weinstein_stage2',
+                                'norm_momentum_score']
+                   if c in watchlist.columns]
+        print(watchlist[wl_cols].to_string(index=False))
+
+    # Gate rejects
+    if len(gate_rejects) > 0:
+        print(f"\nG6 gate rejects ({len(gate_rejects)}):")
+        print(gate_rejects[['symbol', 'rejection_reason']].to_string(index=False))
+
+    # Weinstein rejects
+    if len(weinstein_rejects) > 0:
+        print(f"\nWeinstein rejects ({len(weinstein_rejects)}):")
+        print(weinstein_rejects[['symbol', 'mr_rank', 'rejection_stage',
+                                  'rejection_reason']].to_string(index=False))
+
+    print(f"\nMONITOR complete. Next rebalance eligible after: "
+          f"{(stored_last_rebalance_date + pd.Timedelta(days=REBALANCE_DAYS)).date() if stored_last_rebalance_date else 'immediately'}")
+    print("=" * 70)
+    sys.exit(0)
+
+# ── REBALANCE MODE — full write ──
 
 # ── Step 5: Merge back remaining Stage 5 columns ──
 extra_cols = [
@@ -157,12 +245,10 @@ print(f"\nRecommendations written : {output_path}")
 print(f"Shape                   : {ranked.shape}")
 
 # ── Step 9: Write combined reject tracker CSV ──
-gate_rejects['as_of_date']    = as_of_date
+gate_rejects['as_of_date']      = as_of_date
 weinstein_rejects['as_of_date'] = as_of_date
 
-all_rejects = pd.concat(
-    [gate_rejects, weinstein_rejects], ignore_index=True
-)
+all_rejects = pd.concat([gate_rejects, weinstein_rejects], ignore_index=True)
 all_rejects['run_date'] = run_date
 
 if len(all_rejects) > 0:
@@ -172,10 +258,6 @@ if len(all_rejects) > 0:
     print(f"  G6 gate rejects       : {len(gate_rejects)}")
     print(f"  Weinstein rejects     : {len(weinstein_rejects)}")
     print(f"  Total rejects         : {len(all_rejects)}")
-    if len(weinstein_rejects) > 0:
-        print(f"\nWeinstein rejects detail:")
-        print(weinstein_rejects[['symbol', 'mr_rank', 'rejection_stage',
-                                  'rejection_reason']].to_string(index=False))
 else:
     print("\nReject tracker: 0 rejects this run")
 
