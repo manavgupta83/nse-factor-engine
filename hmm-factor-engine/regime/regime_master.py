@@ -5,15 +5,17 @@ Production orchestrator. Run this once a week. Does everything.
 
 Pipeline
 --------
+Step 0   Check data/index_prices.parquet is current.
+         If stale -> run data/fetch_index_data.py first.
+
 Step 1a  Staleness check on prices_hmm_daily.parquet vs last weekday.
          If stale -> run fetch_hmm_stock_data_historical.py (incremental).
          If current -> skip.
 
 Step 1b  Run liquidity_risk_index.py unconditionally (all 4 universes).
-         Fast run. Index OHLCV fetched live inside it via yfinance.
+         Reads index OHLCV from data/index_prices.parquet (no yfinance).
 
 Step 2   Run liquidity_risk_narrative.py for all 4 universes.
-         Auto-detects latest date from each universe parquet.
 
 Step 3a  Staleness check on nifty500_hmm_data.parquet vs current month.
          If stale -> run fetch_hmm_nifty_indices_data.py.
@@ -23,13 +25,12 @@ Step 3b  Run hmm_forward_algo.py (causal forward pass).
 
 Step 4   Combine narrative JSON + HMM result per universe.
          Save regime_combined_<univ>_<date>.json.
-         Print consolidated summary to stdout.
 
 Usage
 -----
-python3 regime_master.py           # standard weekly run
-python3 regime_master.py --quiet   # suppress verbose output
-python3 regime_master.py --force   # force all fetches even if current
+python3 hmm-factor-engine/regime/regime_master.py
+python3 hmm-factor-engine/regime/regime_master.py --quiet
+python3 hmm-factor-engine/regime/regime_master.py --force
 """
 
 import argparse
@@ -44,23 +45,24 @@ from pathlib import Path
 import pandas as pd
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-BASE_DIR      = Path("/home/ec2-user/nse-factor-engine")
-HMM_DIR       = BASE_DIR / "hmm-factor-engine"
-DATA_DIR      = HMM_DIR / "data"
-REGIME_DIR    = HMM_DIR / "regime"
-REGIME_DATA   = REGIME_DIR / "data"
-CAL_PATH      = REGIME_DATA / "calibration.json"
+BASE_DIR    = Path("/home/ec2-user/nse-factor-engine")
+HMM_DIR     = BASE_DIR / "hmm-factor-engine"
+DATA_DIR    = HMM_DIR / "data"
+REGIME_DIR  = HMM_DIR / "regime"
+REGIME_DATA = REGIME_DIR / "data"
+CAL_PATH    = REGIME_DATA / "calibration.json"
 
 # Scripts
-FETCH_STOCKS_PY   = DATA_DIR  / "fetch_hmm_stock_data_historical.py"
-FETCH_INDICES_PY  = DATA_DIR  / "fetch_hmm_nifty_indices_data.py"
+FETCH_INDEX_PY    = BASE_DIR / "data"    / "fetch_index_data.py"          # unified fetch
+FETCH_STOCKS_PY   = DATA_DIR / "fetch_hmm_stock_data_historical.py"
+FETCH_INDICES_PY  = DATA_DIR / "fetch_hmm_nifty_indices_data.py"
 INDEX_PY          = REGIME_DIR / "liquidity_risk_index.py"
 NARRATIVE_PY      = REGIME_DIR / "liquidity_risk_narrative.py"
 FORWARD_PY        = REGIME_DIR / "hmm_forward_algo.py"
-PDF_PY            = REGIME_DIR / "build_regime_pdf.py"
 HTML_PDF_PY       = REGIME_DIR / "build_regime_html_pdf.py"
 
 # Parquets
+INDEX_PQ     = BASE_DIR / "data" / "index_prices.parquet"   # single source of truth
 PRICES_PQ    = DATA_DIR / "prices_hmm_daily.parquet"
 NIFTY500_PQ  = DATA_DIR / "nifty500_hmm_data.parquet"
 
@@ -82,14 +84,12 @@ MEASURE_LABELS = {
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def last_weekday(d=None):
-    """Return the most recent weekday on or before d (default: today)."""
     d = d or date.today()
-    offset = max(0, d.weekday() - 4)   # sat->1, sun->2, else 0
+    offset = max(0, d.weekday() - 4)
     return d - timedelta(days=offset)
 
 
 def parquet_max_date(path):
-    """Return max date from parquet. None if file missing."""
     if not Path(path).exists():
         return None
     df = pd.read_parquet(path)
@@ -100,7 +100,6 @@ def parquet_max_date(path):
 
 
 def parquet_max_month(path):
-    """Return max month (as date, first of month) from parquet index."""
     if not Path(path).exists():
         return None
     df = pd.read_parquet(path)
@@ -109,12 +108,12 @@ def parquet_max_month(path):
 
 
 def run_subprocess(script_path, label, verbose=True):
-    """Run a python script as subprocess. Raises on failure."""
     print(f"\n  Running {label}...")
     result = subprocess.run(
         [sys.executable, str(script_path)],
         capture_output=not verbose,
         text=True,
+        cwd=str(BASE_DIR),
     )
     if result.returncode != 0:
         print(f"ERROR in {label}:\n{result.stderr}")
@@ -123,7 +122,6 @@ def run_subprocess(script_path, label, verbose=True):
 
 
 def load_module(name, path):
-    """Import a .py file as a module by path."""
     spec   = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -136,13 +134,36 @@ def section(title):
     print(f"{'='*70}")
 
 
-# ── Step 1a: Stock price staleness check + fetch ──────────────────────────────
+# ── Step 0: Index parquet staleness check ─────────────────────────────────────
+
+def step_0_index_parquet(force=False, verbose=True):
+    section("STEP 0 -- Index Prices (data/index_prices.parquet)")
+
+    target    = last_weekday()
+    index_max = parquet_max_date(INDEX_PQ)
+
+    print(f"  Last weekday          : {target}")
+    print(f"  index_prices max date : {index_max or 'NOT FOUND'}")
+
+    if not force and index_max and index_max >= target:
+        print(f"  Status: CURRENT -- skipping fetch")
+        return
+
+    if index_max is None:
+        print(f"  Status: MISSING -- running full fetch")
+    else:
+        print(f"  Status: STALE by {(target - index_max).days} day(s) -- running fetch")
+
+    run_subprocess(FETCH_INDEX_PY, "data/fetch_index_data.py", verbose=verbose)
+
+
+# ── Step 1a: Stock price staleness check ──────────────────────────────────────
 
 def step_1a_stock_prices(force=False, verbose=True):
     section("STEP 1a -- Stock Prices (prices_hmm_daily.parquet)")
 
-    target      = last_weekday()
-    prices_max  = parquet_max_date(PRICES_PQ)
+    target     = last_weekday()
+    prices_max = parquet_max_date(PRICES_PQ)
 
     print(f"  Last weekday             : {target}")
     print(f"  prices_hmm_daily max date: {prices_max or 'NOT FOUND'}")
@@ -180,7 +201,7 @@ def step_2_narrative(verbose=True):
     with open(CAL_PATH) as f:
         cal_all = json.load(f)
 
-    narrative_mod = load_module("liquidity_risk_narrative", NARRATIVE_PY)
+    narrative_mod   = load_module("liquidity_risk_narrative", NARRATIVE_PY)
     narrative_paths = {}
 
     for univ in UNIVERSES:
@@ -202,8 +223,7 @@ def step_2_narrative(verbose=True):
         if verbose:
             print(text)
 
-        # Resolve actual date used (narrative snaps to nearest trading day)
-        dt = pd.Timestamp(latest_date)
+        dt          = pd.Timestamp(latest_date)
         actual_date = dt.date() if dt in df.index else df.index[
             df.index.get_indexer([dt], method="nearest")[0]
         ].date()
@@ -218,18 +238,17 @@ def step_2_narrative(verbose=True):
     return narrative_paths
 
 
-# ── Step 3a: HMM data staleness check + fetch ─────────────────────────────────
+# ── Step 3a: HMM data staleness check ────────────────────────────────────────
 
 def step_3a_hmm_data(force=False, verbose=True):
     section("STEP 3a -- HMM Index Data (nifty500_hmm_data.parquet)")
 
-    # Current month = first day of this month
     today         = date.today()
     current_month = date(today.year, today.month, 1)
     hmm_max_month = parquet_max_month(NIFTY500_PQ)
 
-    print(f"  Current month            : {current_month.strftime('%Y-%m')}")
-    print(f"  nifty500_hmm_data max    : {hmm_max_month.strftime('%Y-%m') if hmm_max_month else 'NOT FOUND'}")
+    print(f"  Current month         : {current_month.strftime('%Y-%m')}")
+    print(f"  nifty500_hmm_data max : {hmm_max_month.strftime('%Y-%m') if hmm_max_month else 'NOT FOUND'}")
 
     if not force and hmm_max_month and hmm_max_month >= current_month:
         print(f"  Status: CURRENT -- skipping fetch")
@@ -317,79 +336,45 @@ def _build_regime_blurb(regime, hmm, narrative):
 
 
 def _save_log(consolidated, log_path):
-    """Write human-readable log of the full run."""
     bar  = "=" * 70
     bar2 = "-" * 70
     lines = []
-
     hmm  = consolidated["hmm"]
     meta = consolidated["meta"]
-
     lines += [
         bar,
         f"  REGIME ENGINE RUN LOG  |  {meta['run_date']}  |  generated {meta['generated_at']}",
-        bar,
-        "",
-        "HMM REGIME  (universe-agnostic, Nifty500 index)",
-        bar2,
+        bar, "",
+        "HMM REGIME  (universe-agnostic, Nifty500 index)", bar2,
         f"  {'Regime':<22}: {hmm['regime']}  [{hmm['regime_conviction'].upper()} conviction]",
         f"  {'P_Bull':<22}: {hmm['P_Bull']:.4f}",
         f"  {'P_Choppy':<22}: {hmm['P_Choppy']:.4f}",
         f"  {'P_Crisis':<22}: {hmm['P_Crisis']:.4f}",
         f"  {'as_of_month':<22}: {hmm['as_of_month']}",
         f"  {'model_trained':<22}: {hmm['model_train_window']}",
-        "",
-        "  REGIME SYNTHESIS  (cross-referenced with nifty500)",
-        f"  {hmm['regime_synthesis']}",
-        "",
+        "", "  REGIME SYNTHESIS  (cross-referenced with nifty500)",
+        f"  {hmm['regime_synthesis']}", "",
     ]
-
     for univ, udata in consolidated["universes"].items():
         narr     = udata["liquidity_risk_narrative"]
         measures = narr.get("measures", {})
-
-        lines += [
-            bar,
-            f"  LIQUIDITY & RISK  |  {univ}  |  {udata['narrative_date']}",
-            bar,
-        ]
-
+        lines += [bar, f"  LIQUIDITY & RISK  |  {univ}  |  {udata['narrative_date']}", bar]
         if udata["hmm_lag_note"]:
             lines.append(f"  WARNING: {udata['hmm_lag_note']}")
-
-        lines += [
-            "",
-            "  OVERALL",
-            f"  {narr.get('overall', '')}",
-            "",
-            f"  RISK MEASURES",
-            f"  {'Measure':<22}  {'Tier':<22}  Reading",
-            f"  {'-'*22}  {'-'*22}  {'-'*40}",
-        ]
+        lines += ["", "  OVERALL", f"  {narr.get('overall', '')}", "",
+                  f"  RISK MEASURES",
+                  f"  {'Measure':<22}  {'Tier':<22}  Reading",
+                  f"  {'-'*22}  {'-'*22}  {'-'*40}"]
         for m in ["rv", "avg_corr", "vov", "dispersion", "drawdown", "skew"]:
-            if m not in measures:
-                continue
-            label    = MEASURE_LABELS.get(m, m)
-            tier_str = f"[{measures[m].get('tier', '').upper()}]"
-            reading  = measures[m].get("reading", "")
-            lines.append(f"  {label:<22}  {tier_str:<22}  {reading}")
-
-        lines += [
-            "",
-            f"  LIQUIDITY MEASURES",
-            f"  {'Measure':<22}  {'Tier':<22}  Reading",
-            f"  {'-'*22}  {'-'*22}  {'-'*40}",
-        ]
+            if m not in measures: continue
+            lines.append(f"  {MEASURE_LABELS.get(m,m):<22}  [{measures[m].get('tier','').upper()}]  {measures[m].get('reading','')}")
+        lines += ["", f"  LIQUIDITY MEASURES",
+                  f"  {'Measure':<22}  {'Tier':<22}  Reading",
+                  f"  {'-'*22}  {'-'*22}  {'-'*40}"]
         for m in ["amihud", "cs_spread", "turnover"]:
-            if m not in measures:
-                continue
-            label    = MEASURE_LABELS.get(m, m)
-            tier_str = f"[{measures[m].get('tier', '').upper()}]"
-            reading  = measures[m].get("reading", "")
-            lines.append(f"  {label:<22}  {tier_str:<22}  {reading}")
-
+            if m not in measures: continue
+            lines.append(f"  {MEASURE_LABELS.get(m,m):<22}  [{measures[m].get('tier','').upper()}]  {measures[m].get('reading','')}")
         lines.append("")
-
     with open(log_path, "w") as f:
         f.write("\n".join(lines))
 
@@ -397,15 +382,13 @@ def _save_log(consolidated, log_path):
 def step_4_combine(narrative_paths, hmm_result):
     section("STEP 4 -- Combine (all 4 universes)")
 
-    generated_at   = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-    run_date       = date.today().strftime("%Y-%m-%d")
+    generated_at = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    run_date     = date.today().strftime("%Y-%m-%d")
 
-    # HMM block -- saved once, shared across all universes
     with open(narrative_paths["nifty500"]) as f:
         n500 = json.load(f)
 
     hmm_month_str = hmm_result["as_of_month"]
-
     hmm_block = {
         "as_of_month":        hmm_month_str,
         "regime":             hmm_result["regime"],
@@ -417,10 +400,8 @@ def step_4_combine(narrative_paths, hmm_result):
         "regime_synthesis":   _build_regime_blurb(hmm_result["regime"], hmm_result, n500),
     }
 
-    # Print HMM block once
     print_hmm_block(hmm_result, narrative_paths)
 
-    # Per-universe narratives
     universes_out = {}
     for univ in UNIVERSES:
         print(f"\n  {'--'*33}")
@@ -430,12 +411,12 @@ def step_4_combine(narrative_paths, hmm_result):
         with open(narrative_paths[univ]) as f:
             narrative = json.load(f)
 
-        narrative_date = narrative["date"]
-        hmm_is_current = (hmm_month_str >= narrative_date[:7])
+        narrative_date  = narrative["date"]
+        hmm_is_current  = (hmm_month_str >= narrative_date[:7])
 
         univ_block = {
-            "narrative_date":          narrative_date,
-            "hmm_is_current":          hmm_is_current,
+            "narrative_date":           narrative_date,
+            "hmm_is_current":           hmm_is_current,
             "hmm_lag_note": (
                 None if hmm_is_current else
                 f"HMM lags -- latest month is {hmm_month_str}, narrative date is {narrative_date}."
@@ -444,7 +425,6 @@ def step_4_combine(narrative_paths, hmm_result):
         }
         universes_out[univ] = univ_block
 
-        # Also save individual universe JSON (unchanged behaviour)
         individual = {
             "meta": {
                 "universe":        univ,
@@ -452,7 +432,7 @@ def step_4_combine(narrative_paths, hmm_result):
                 "hmm_as_of_month": hmm_month_str,
                 "generated_at":    generated_at,
             },
-            "hmm":                     hmm_block,
+            "hmm":                      hmm_block,
             "liquidity_risk_narrative": narrative,
         }
         ind_path = REGIME_DATA / f"regime_combined_{univ}_{narrative_date}.json"
@@ -460,33 +440,27 @@ def step_4_combine(narrative_paths, hmm_result):
             json.dump(individual, f, indent=2)
 
         print_narrative_block(univ, narrative_date, narrative, hmm_is_current,
-                               univ_block["hmm_lag_note"])
+                              univ_block["hmm_lag_note"])
         print(f"  OK -- saved -> {ind_path.name}")
 
-    # Consolidated JSON -- HMM + all 4 universes in one file
     consolidated = {
-        "meta": {
-            "run_date":    run_date,
-            "generated_at": generated_at,
-        },
-        "hmm":      hmm_block,
+        "meta": {"run_date": run_date, "generated_at": generated_at},
+        "hmm":       hmm_block,
         "universes": universes_out,
     }
     cons_path = REGIME_DATA / f"regime_consolidated_{run_date}.json"
     with open(cons_path, "w") as f:
         json.dump(consolidated, f, indent=2)
-    print(f"\n  OK -- consolidated JSON saved -> {cons_path.name}")
+    print(f"\n  OK -- consolidated JSON -> {cons_path.name}")
 
-    # Human-readable log
     log_path = REGIME_DATA / f"regime_run_{run_date}.log"
     _save_log(consolidated, log_path)
-    print(f"  OK -- run log saved          -> {log_path.name}")
+    print(f"  OK -- run log          -> {log_path.name}")
 
 
-# ── Summary printers ─────────────────────────────────────────────────────────
+# ── Summary printers ──────────────────────────────────────────────────────────
 
 def print_hmm_block(hmm_result, narrative_paths):
-    """Print HMM regime section once. Synthesis uses nifty500 as reference."""
     bar = "=" * 70
     print(f"\n{bar}")
     print(f"  HMM REGIME  (universe-agnostic, Nifty500 index)")
@@ -498,8 +472,6 @@ def print_hmm_block(hmm_result, narrative_paths):
     print(f"  {'P_Crisis':<22}: {hmm_result['P_Crisis']:.4f}")
     print(f"  {'as_of_month':<22}: {hmm_result['as_of_month']}")
     print(f"  {'model_trained':<22}: {hmm_result['model_train_window']}")
-
-    # Synthesis cross-referenced against nifty500 narrative
     with open(narrative_paths["nifty500"]) as f:
         n500 = json.load(f)
     blurb = _build_regime_blurb(hmm_result["regime"], hmm_result, n500)
@@ -509,57 +481,32 @@ def print_hmm_block(hmm_result, narrative_paths):
 
 
 def print_narrative_block(univ, narrative_date, narr, hmm_is_current, hmm_lag_note):
-    """Print per-universe liquidity/risk narrative -- no HMM repetition."""
     bar = "=" * 70
-
     print(f"\n{bar}")
     print(f"  LIQUIDITY & RISK  |  {univ}  |  {narrative_date}")
     print(bar)
-
     if not hmm_is_current and hmm_lag_note:
         print(f"  WARNING: {hmm_lag_note}")
-
     print(f"\n  OVERALL")
     print(f"  {narr.get('overall', '')}")
-
     measures = narr.get("measures", {})
     if measures:
         print(f"\n  RISK MEASURES")
         print(f"  {'Measure':<22}  {'Tier':<22}  Reading")
         print(f"  {'-'*22}  {'-'*22}  {'-'*40}")
         for m in ["rv", "avg_corr", "vov", "dispersion", "drawdown", "skew"]:
-            if m not in measures:
-                continue
-            label    = MEASURE_LABELS.get(m, m)
-            tier_str = f"[{measures[m].get('tier', '').upper()}]"
-            reading  = measures[m].get("reading", "")
-            print(f"  {label:<22}  {tier_str:<22}  {reading}")
-        print("")
-        print(f"  LIQUIDITY MEASURES")
+            if m not in measures: continue
+            print(f"  {MEASURE_LABELS.get(m,m):<22}  [{measures[m].get('tier','').upper()}]  {measures[m].get('reading','')}")
+        print(f"\n  LIQUIDITY MEASURES")
         print(f"  {'Measure':<22}  {'Tier':<22}  Reading")
         print(f"  {'-'*22}  {'-'*22}  {'-'*40}")
         for m in ["amihud", "cs_spread", "turnover"]:
-            if m not in measures:
-                continue
-            label    = MEASURE_LABELS.get(m, m)
-            tier_str = f"[{measures[m].get('tier', '').upper()}]"
-            reading  = measures[m].get("reading", "")
-            print(f"  {label:<22}  {tier_str:<22}  {reading}")
-
+            if m not in measures: continue
+            print(f"  {MEASURE_LABELS.get(m,m):<22}  [{measures[m].get('tier','').upper()}]  {measures[m].get('reading','')}")
     print(f"\n{bar}\n")
 
 
-# ── Step 5: PDF ──────────────────────────────────────────────────────────────
-
-def step_5_pdf(run_date, verbose=True):
-    section("STEP 5 -- PDF Report")
-    pdf_mod = load_module("build_regime_pdf", PDF_PY)
-    _, consolidated = pdf_mod.load_consolidated(run_date)
-    out_path = REGIME_DATA / f"regime_report_{run_date}.pdf"
-    pdf_mod.build_pdf(consolidated, out_path)
-    print(f"  OK -- PDF saved -> {out_path.name}")
-    return out_path
-
+# ── Step 5: PDF ───────────────────────────────────────────────────────────────
 
 def step_5b_html_pdf(run_date, verbose=True):
     section("STEP 5b -- Design PDF Report")
@@ -576,10 +523,8 @@ def step_5b_html_pdf(run_date, verbose=True):
 
 def parse_args():
     p = argparse.ArgumentParser(description="Regime master — weekly production run")
-    p.add_argument("--quiet", "-q", action="store_true",
-                   help="Suppress verbose subprocess and narrative output")
-    p.add_argument("--force", action="store_true",
-                   help="Force all data fetches even if parquets are current")
+    p.add_argument("--quiet", "-q", action="store_true")
+    p.add_argument("--force", action="store_true")
     return p.parse_args()
 
 
@@ -595,25 +540,13 @@ def main():
     print(f"{'='*70}")
 
     try:
-        # Step 1a: stock prices
+        step_0_index_parquet(force=args.force, verbose=verbose)
         step_1a_stock_prices(force=args.force, verbose=verbose)
-
-        # Step 1b: liquidity & risk index
         step_1b_index(verbose=verbose)
-
-        # Step 2: narrative
         narrative_paths = step_2_narrative(verbose=verbose)
-
-        # Step 3a: HMM index data
         step_3a_hmm_data(force=args.force, verbose=verbose)
-
-        # Step 3b: HMM forward algo
         hmm_result = step_3b_forward_algo(verbose=verbose)
-
-        # Step 4: combine
         step_4_combine(narrative_paths, hmm_result)
-
-        # Step 5: Design PDF
         step_5b_html_pdf(run_date, verbose=verbose)
 
     except Exception as e:
@@ -623,6 +556,7 @@ def main():
 
     print(f"\n{'='*70}")
     print(f"  ALL DONE")
+    print(f"  index_prices max date     : {parquet_max_date(INDEX_PQ)}")
     print(f"  prices_hmm_daily max date : {parquet_max_date(PRICES_PQ)}")
     print(f"  HMM as_of_month           : {hmm_result['as_of_month']}")
     print(f"  Generated at              : {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")

@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
-import yfinance as yf
-from datetime import timedelta
+from datetime import date
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -10,11 +9,14 @@ BASE     = "/home/ec2-user/nse-factor-engine"
 DATA_DIR = f"{BASE}/hmm-factor-engine/data"
 OUT_DIR  = f"{BASE}/hmm-factor-engine/regime/data"
 
+# Single source of truth for index OHLCV
+INDEX_PARQUET = f"{BASE}/data/index_prices.parquet"
+
 UNIVERSES = {
-    "nifty500":        ("^CRSLDX",             f"{BASE}/nifty500_symbols.csv"),
-    "nifty100":        ("^CNX100",             f"{BASE}/nifty100_symbols.csv"),
-    "niftymidcap150":  ("NIFTYMIDCAP150.NS",   f"{BASE}/niftymidcap150_symbols.csv"),
-    "niftysmallcap250":("NIFTYSMLCAP250.NS",   f"{BASE}/niftysmallcap250_symbols.csv"),
+    "nifty500":         ("^CRSLDX",           f"{BASE}/nifty500_symbols.csv"),
+    "nifty100":         ("^CNX100",            f"{BASE}/nifty100_symbols.csv"),
+    "niftymidcap150":   ("NIFTYMIDCAP150.NS",  f"{BASE}/niftymidcap150_symbols.csv"),
+    "niftysmallcap250": ("NIFTYSMLCAP250.NS",  f"{BASE}/niftysmallcap250_symbols.csv"),
 }
 
 ROLL_SHORT = 21
@@ -28,13 +30,6 @@ WINSOR_PCT = 99
 # ═════════════════════════════════════════════
 
 def load_data():
-    """
-    Load prices, shares outstanding, and corporate action flags.
-    Returns:
-        prices   : long-format DataFrame (symbol, date, ohlcv) — flagged symbols removed
-        shares   : Series indexed by symbol (TENNIND already dropped)
-        excluded : set of flagged symbols
-    """
     print("Loading corporate action flags...")
     ca = pd.read_parquet(f"{DATA_DIR}/corporate_action_flags.parquet")
     ca.columns = ca.columns.str.strip().str.lower()
@@ -59,9 +54,6 @@ def load_data():
 
 
 def load_universe_members(csv_path, excluded):
-    """
-    Load universe CSV and return set of valid member symbols.
-    """
     df = pd.read_csv(csv_path)
     df.columns = df.columns.str.strip().str.lower()
     members = set(df["symbol"].tolist()) - excluded
@@ -70,22 +62,18 @@ def load_universe_members(csv_path, excluded):
 
 
 def pivot_prices(prices, members):
-    """
-    Filter prices to universe members and pivot to wide format.
-    Returns dict of wide DataFrames: close, volume, high, low, returns.
-    """
     px = prices[prices["symbol"].isin(members)].copy()
     px = px.sort_values(["symbol", "date"])
-    close_w  = px.pivot(index="date", columns="symbol", values="close")
-    volume_w = px.pivot(index="date", columns="symbol", values="volume")
-    high_w   = px.pivot(index="date", columns="symbol", values="high")
-    low_w    = px.pivot(index="date", columns="symbol", values="low")
+    close_w   = px.pivot(index="date", columns="symbol", values="close")
+    volume_w  = px.pivot(index="date", columns="symbol", values="volume")
+    high_w    = px.pivot(index="date", columns="symbol", values="high")
+    low_w     = px.pivot(index="date", columns="symbol", values="low")
     returns_w = close_w.pct_change(fill_method=None)
     return {
-        "close": close_w,
-        "volume": volume_w,
-        "high": high_w,
-        "low": low_w,
+        "close":   close_w,
+        "volume":  volume_w,
+        "high":    high_w,
+        "low":     low_w,
         "returns": returns_w,
     }
 
@@ -119,29 +107,18 @@ def winsorize_row(row, pct=WINSOR_PCT):
 # ═════════════════════════════════════════════
 
 def compute_amihud(close_w, volume_w):
-    """
-    LI-1: Amihud Illiquidity Ratio.
-    ILLIQ_i,t = |r_i,t| / (close_i,t * volume_i,t)
-    Rolling 21-day mean per stock → winsorize at 99th pct → cross-sectional mean.
-    Returns daily Series: amihud_cs
-    """
     print("  Computing Amihud...")
-    returns_w = close_w.pct_change(fill_method=None)
-    rupee_vol = close_w * volume_w
-    illiq     = returns_w.abs() / rupee_vol.replace(0, np.nan)
+    returns_w  = close_w.pct_change(fill_method=None)
+    rupee_vol  = close_w * volume_w
+    illiq      = returns_w.abs() / rupee_vol.replace(0, np.nan)
     illiq_roll = illiq.rolling(ROLL_SHORT, min_periods=ROLL_SHORT // 2).mean()
-    amihud_cs = illiq_roll.apply(winsorize_row, axis=1).mean(axis=1)
+    amihud_cs  = illiq_roll.apply(winsorize_row, axis=1).mean(axis=1)
     amihud_cs.name = "amihud"
     print(f"    Shape: {amihud_cs.shape}  Nulls: {amihud_cs.isna().sum()}")
     return amihud_cs
 
 
 def compute_cs_spread(high_w, low_w):
-    """
-    LI-2: Corwin-Schultz High-Low Spread (2012).
-    Uses daily + 2-day rolling windows. Cross-sectional mean per day.
-    Returns daily Series: cs_cs
-    """
     print("  Computing Corwin-Schultz spread...")
 
     def _cs_per_stock(high, low):
@@ -163,15 +140,10 @@ def compute_cs_spread(high_w, low_w):
                for sym in high_w.columns]
     cs_w = pd.concat(cs_list, axis=1)
 
-    # Null out any date where the previous ROW is not the immediately
-    # preceding trading day in the index — protects against yfinance
-    # missing dates inflating the 2-day rolling window in CS formula.
-    # We use positional row gap (should always be 1) not calendar days
-    # so long weekends and back-to-back holidays are handled correctly.
     trading_dates = pd.Series(range(len(cs_w.index)), index=cs_w.index)
-    row_gaps      = trading_dates.diff()          # should always be 1.0
-    bad_dates     = row_gaps[row_gaps != 1].index # any skip in trading days
-    cs_w.loc[bad_dates] = float('nan')
+    row_gaps      = trading_dates.diff()
+    bad_dates     = row_gaps[row_gaps != 1].index
+    cs_w.loc[bad_dates] = float("nan")
 
     cs_cs = cs_w.mean(axis=1)
     cs_cs.name = "cs_spread"
@@ -180,15 +152,8 @@ def compute_cs_spread(high_w, low_w):
 
 
 def compute_turnover(close_w, volume_w, shares):
-    """
-    LI-3: Turnover Ratio.
-    Turnover_i,t = (close * volume) / (close * shares_outstanding)
-    Rolling 21-day mean → cross-sectional mean.
-    TENNIND excluded automatically (NaN dropped in load_data).
-    Returns daily Series: turnover_cs
-    """
     print("  Computing Turnover...")
-    syms = [s for s in close_w.columns if s in shares.index]
+    syms      = [s for s in close_w.columns if s in shares.index]
     close_ts  = close_w[syms]
     volume_ts = volume_w[syms]
     so        = shares[syms]
@@ -202,12 +167,6 @@ def compute_turnover(close_w, volume_w, shares):
 
 
 def compute_li(amihud_cs, cs_cs, turnover_cs):
-    """
-    LI Composite.
-    z( 1/amihud ) + z( -cs_spread ) + z( turnover ) → mean
-    All z-scores rolling 252-day.
-    Returns daily Series: li
-    """
     print("  Building LI composite...")
     z_amihud   = rolling_zscore(1 / amihud_cs.replace(0, np.nan))
     z_cs       = rolling_zscore(-cs_cs)
@@ -219,28 +178,31 @@ def compute_li(amihud_cs, cs_cs, turnover_cs):
 
 
 # ═════════════════════════════════════════════
-# SECTION 4 — INDEX DATA
+# SECTION 4 — INDEX DATA  (reads shared parquet, no yfinance)
 # ═════════════════════════════════════════════
 
 def fetch_index_ohlcv(ticker, start_date, end_date):
     """
-    Fetch index OHLCV fresh from yfinance.
+    Read index OHLCV from the shared data/index_prices.parquet.
+    Signature kept identical to the old yfinance version so no callers change.
     Returns DataFrame with lowercase columns, date index.
     """
-    print(f"  Fetching index: {ticker}...")
-    raw = yf.download(
-        ticker,
-        start=start_date.strftime("%Y-%m-%d"),
-        end=(end_date + timedelta(days=1)).strftime("%Y-%m-%d"),
-        auto_adjust=True, progress=False
+    print(f"  Loading index from parquet: {ticker}...")
+
+    prices = pd.read_parquet(INDEX_PARQUET)
+    prices["date"] = pd.to_datetime(prices["date"])
+    prices.columns = prices.columns.str.strip().str.lower()
+
+    mask = (
+        (prices["symbol"] == ticker) &
+        (prices["date"]   >= pd.Timestamp(start_date)) &
+        (prices["date"]   <= pd.Timestamp(end_date))
     )
-    if isinstance(raw.columns, pd.MultiIndex):
-        raw.columns = raw.columns.get_level_values(0)
-    raw.columns = raw.columns.str.strip().str.lower()
-    raw.index   = pd.to_datetime(raw.index)
-    raw.index.name = "date"
-    print(f"    Index shape: {raw.shape}")
-    return raw
+    df = prices[mask].copy()
+    df = df.drop(columns=["symbol"]).set_index("date").sort_index()
+
+    print(f"    Index shape: {df.shape}")
+    return df
 
 
 # ═════════════════════════════════════════════
@@ -248,11 +210,6 @@ def fetch_index_ohlcv(ticker, start_date, end_date):
 # ═════════════════════════════════════════════
 
 def compute_rv(idx_ret):
-    """
-    RI-1: Realized Volatility (annualised).
-    RV_t = sqrt(252 * mean(r^2)) over rolling 21-day.
-    Returns daily Series: rv
-    """
     print("  Computing RI-1 Realized Vol...")
     rv = np.sqrt(
         252 * (idx_ret ** 2).rolling(ROLL_SHORT, min_periods=ROLL_SHORT // 2).mean()
@@ -263,11 +220,6 @@ def compute_rv(idx_ret):
 
 
 def compute_vov(rv):
-    """
-    RI-2: Volatility of Volatility.
-    VoV_t = rolling_std(RV, window=21)
-    Returns daily Series: vov
-    """
     print("  Computing RI-2 VoV...")
     vov = rv.rolling(ROLL_SHORT, min_periods=ROLL_SHORT // 2).std()
     vov.name = "vov"
@@ -276,11 +228,6 @@ def compute_vov(rv):
 
 
 def compute_dispersion(returns_w):
-    """
-    RI-3: Cross-sectional Dispersion.
-    std of stock returns across universe on each day.
-    Returns daily Series: dispersion
-    """
     print("  Computing RI-3 Dispersion...")
     dispersion = returns_w.std(axis=1)
     dispersion.name = "dispersion"
@@ -289,11 +236,6 @@ def compute_dispersion(returns_w):
 
 
 def compute_avg_corr(returns_w, idx_ret):
-    """
-    RI-4: Average Pairwise Correlation — PCA proxy.
-    Rolling 21-day correlation of each stock with index return → cross-sectional mean.
-    Returns daily Series: avg_corr
-    """
     print("  Computing RI-4 Avg Corr (PCA proxy)...")
     idx_aligned = idx_ret.reindex(returns_w.index)
     corr_cols   = [
@@ -310,26 +252,15 @@ def compute_avg_corr(returns_w, idx_ret):
 
 
 def compute_drawdown(idx_close):
-    """
-    RI-5: Drawdown Depth.
-    DD_t = (P_t - max(P_{t-252:t})) / max(P_{t-252:t})
-    Negative values — flipped in RI composite.
-    Returns daily Series: drawdown
-    """
     print("  Computing RI-5 Drawdown...")
-    roll_max  = idx_close.rolling(ROLL_LONG, min_periods=ROLL_LONG // 2).max()
-    drawdown  = (idx_close - roll_max) / roll_max.replace(0, np.nan)
+    roll_max = idx_close.rolling(ROLL_LONG, min_periods=ROLL_LONG // 2).max()
+    drawdown = (idx_close - roll_max) / roll_max.replace(0, np.nan)
     drawdown.name = "drawdown"
     print(f"    Shape: {drawdown.shape}  Nulls: {drawdown.isna().sum()}")
     return drawdown
 
 
 def compute_skew(idx_ret):
-    """
-    RI-6: Rolling Skewness (60-day).
-    More negative → crash-like → flipped in RI composite.
-    Returns daily Series: skew
-    """
     print("  Computing RI-6 Skewness...")
     skew = idx_ret.rolling(ROLL_SKEW, min_periods=ROLL_SKEW // 2).skew()
     skew.name = "skew"
@@ -338,12 +269,6 @@ def compute_skew(idx_ret):
 
 
 def compute_ri(rv, vov, dispersion, avg_corr, drawdown, skew, common_idx):
-    """
-    RI Composite.
-    z(rv) + z(vov) + z(disp) + z(corr) + z(-dd) + z(-skew) → mean
-    All z-scores rolling 252-day.
-    Returns daily Series: ri
-    """
     print("  Building RI composite...")
 
     def align(s):
@@ -356,12 +281,10 @@ def compute_ri(rv, vov, dispersion, avg_corr, drawdown, skew, common_idx):
     z_dd   = rolling_zscore(-align(drawdown))
     z_skew = rolling_zscore(-align(skew))
 
-    ri_df = pd.concat([z_rv, z_vov, z_disp, z_corr, z_dd, z_skew], axis=1)
-    # Require at least 5 of 6 components to be non-null before computing RI
-    # Prevents misaligned index/stock dates from producing misleading scores
+    ri_df        = pd.concat([z_rv, z_vov, z_disp, z_corr, z_dd, z_skew], axis=1)
     valid_counts = ri_df.notna().sum(axis=1)
-    ri = ri_df.mean(axis=1)
-    ri[valid_counts < 5] = float('nan')
+    ri           = ri_df.mean(axis=1)
+    ri[valid_counts < 5] = float("nan")
     ri.name = "ri"
     print(f"    Shape: {ri.shape}  Nulls: {ri.isna().sum()}")
     return ri
@@ -372,11 +295,6 @@ def compute_ri(rv, vov, dispersion, avg_corr, drawdown, skew, common_idx):
 # ═════════════════════════════════════════════
 
 def compute_stress(li, ri):
-    """
-    Stress Score = 0.5 * (1 - LI_norm) + 0.5 * RI_norm
-    LI_norm and RI_norm: rolling min-max scaled to [0,1] over 252-day window.
-    Returns daily Series: stress_score
-    """
     print("  Building Stress Score...")
     li_norm = minmax_roll(li)
     ri_norm = minmax_roll(ri)
@@ -391,16 +309,12 @@ def compute_stress(li, ri):
 # ═════════════════════════════════════════════
 
 def run_universe(univ_name, idx_ticker, csv_path, prices, shares, excluded):
-    """
-    Full pipeline for one universe.
-    Saves parquet to OUT_DIR and returns the output DataFrame.
-    """
     print(f"\n{'='*60}")
     print(f"Processing: {univ_name}")
     print(f"{'='*60}")
 
-    members = load_universe_members(csv_path, excluded)
-    wide    = pivot_prices(prices, members)
+    members   = load_universe_members(csv_path, excluded)
+    wide      = pivot_prices(prices, members)
 
     close_w   = wide["close"]
     volume_w  = wide["volume"]
@@ -417,7 +331,7 @@ def run_universe(univ_name, idx_ticker, csv_path, prices, shares, excluded):
     cs_cs       = compute_cs_spread(high_w, low_w)
     turnover_cs = compute_turnover(close_w, volume_w, shares)
 
-    # ── Index data ───────────────────────────
+    # ── Index data from shared parquet ───────
     idx_df    = fetch_index_ohlcv(idx_ticker, start_date, end_date)
     idx_close = idx_df["close"]
     idx_ret   = idx_close.pct_change()
@@ -461,6 +375,22 @@ def run_universe(univ_name, idx_ticker, csv_path, prices, shares, excluded):
 # ═════════════════════════════════════════════
 
 def main():
+    # Staleness check
+    import os
+    from pathlib import Path
+    pq = Path(INDEX_PARQUET)
+    if not pq.exists():
+        raise FileNotFoundError(
+            f"ERROR: {INDEX_PARQUET} not found.\n"
+            "Run data/fetch_index_data.py first."
+        )
+    index_mtime = date.fromtimestamp(pq.stat().st_mtime)
+    if index_mtime < date.today():
+        raise RuntimeError(
+            f"ERROR: {INDEX_PARQUET} is stale (last modified {index_mtime}).\n"
+            "Run data/fetch_index_data.py first."
+        )
+
     prices, shares, excluded = load_data()
     for univ_name, (idx_ticker, csv_path) in UNIVERSES.items():
         run_universe(univ_name, idx_ticker, csv_path, prices, shares, excluded)
