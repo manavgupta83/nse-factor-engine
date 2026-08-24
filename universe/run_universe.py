@@ -22,7 +22,7 @@ PRICES_PATH     = Path("data/prices.parquet")
 METADATA_PATH   = Path("data/universe_metadata.parquet")
 ADTV_PATH       = Path("data/adtv.parquet")
 UNIVERSE_DIR    = Path("universe")
-SYMBOLS_CSV     = Path("data/raw/nifty500_symbols.csv")
+SYMBOLS_CSV     = Path("nifty500_symbols.csv")
 LAST_RUN_PATH   = Path("data/last_run_date.txt")
 FAILED_PATH     = Path("data/failed_symbols_{}.csv".format(END_DATE.strftime("%Y%m%d")))
 
