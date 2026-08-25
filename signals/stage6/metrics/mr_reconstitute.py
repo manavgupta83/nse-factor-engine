@@ -1,37 +1,30 @@
 """
 Stage 6 — Hybrid Buffer Zone Reconstitution
 
-Weinstein applied in reconstitution, NOT as a pre-scoring gate.
+SET 1 (FORCED_IN_N = 12):
+  Top 12 by mr_rank OVERALL. Weinstein bypassed. Always enter portfolio.
 
-Rules:
-  PORTFOLIO_N  = 25   (target portfolio size)
-  BUFFER_ZONE  = 38   (retention threshold)
-  FORCED_IN_N  = 12   (top N non-holders always enter, bypass Weinstein)
+SET 2 pool:
+  Ranks 13+ → drop WS2 failures → re-rank from 13 → keep re-ranks 13-38.
 
-Hybrid Weinstein logic:
-  - Forced-in (rank 1-FORCED_IN_N non-holders): enter regardless of Weinstein
-  - Retained holdings (rank <= BUFFER_ZONE): MUST pass weinstein_stage2 == True
-    else treated as forced_out
-  - Fill slots (rank 13-38 non-holders): MUST pass weinstein_stage2 == True
-  - Emergency fill: if Weinstein filter leaves portfolio short, fill without Weinstein
+SET 2 selection (SET2_TARGET = 13 slots):
+  1. Current HOLDs in pool take priority (sorted by re-rank, ascending).
+  2. Remaining slots filled by non-holders sorted by norm_momentum_score descending.
+  3. Rest of pool → WATCHLIST.
 
-Weinstein reject tracker:
-  Tracks two categories:
-  1. Holdings forced out due to Weinstein failure (not just rank)
-  2. Non-holders ranked 13-BUFFER_ZONE that failed Weinstein in fill pool
-     (stocks that WOULD have entered but trend reversal blocked them)
+WS2 failures (ranks 13+):
+  - Current holding  → SELL (forced out, trend reversal)
+  - Non-holder       → excluded, no action
 
-Returns:
-  output_df        — dataframe with tier and action columns
-  top25_symbols    — set of symbols in final TOP_25
-  weinstein_rejects — dataframe of Weinstein-rejected stocks with rejection_reason
+Final portfolio = SET 1 (12) + SET 2 (13) = 25.
 """
 
 import pandas as pd
 
 PORTFOLIO_N  = 25
-BUFFER_ZONE  = 38
 FORCED_IN_N  = 12
+BUFFER_ZONE  = 38
+SET2_TARGET  = PORTFOLIO_N - FORCED_IN_N   # 13
 
 
 def apply_reconstitution(
@@ -40,149 +33,110 @@ def apply_reconstitution(
 ) -> tuple:
 
     df = ranked_df.copy()
-    all_symbols = set(df['symbol'])
 
-    wein_lookup = dict(zip(df['symbol'], df['weinstein_stage2'])) \
-                  if 'weinstein_stage2' in df.columns else {}
-
-    unscored = current_holdings - all_symbols
+    # Holdings not in scored universe at all — force SELL
+    unscored = current_holdings - set(df['symbol'])
     if unscored:
-        print(f"WARNING: {len(unscored)} current holdings not in scored universe: "
-              f"{sorted(unscored)}")
-    scoreable_holdings = current_holdings & all_symbols
+        print(f"WARNING: {len(unscored)} current holdings not in scored universe "
+              f"(force SELL): {sorted(unscored)}")
 
-    is_first_run = len(current_holdings) == 0
+    # ── SET 1: top 12 OVERALL, Weinstein bypassed ─────────────────────────
+    set1_df      = df[df['mr_rank'] <= FORCED_IN_N].sort_values('mr_rank').copy()
+    set1_symbols = set(set1_df['symbol'])
 
-    # ── Step 1: Split holdings by rank and Weinstein ──
-    holdings_df = df[df['symbol'].isin(scoreable_holdings)].copy()
+    print(f"\nSET 1 (top {FORCED_IN_N} overall, WS bypassed):")
+    for _, r in set1_df.iterrows():
+        action = 'HOLD' if r['symbol'] in current_holdings else 'BUY'
+        ws     = r.get('weinstein_stage2', '?')
+        print(f"  rank {int(r['mr_rank']):2d}  {r['symbol']:15s}  "
+              f"WS2={ws}  score={r['norm_momentum_score']:.4f}  {action}")
 
-    retained = set(
-        holdings_df[
-            (holdings_df['mr_rank'] <= BUFFER_ZONE) &
-            (holdings_df['weinstein_stage2'] == True)
-        ]['symbol']
+    # ── SET 2 pool: ranks 13+, drop WS2 failures, re-rank ─────────────────
+    set2_candidates = df[df['mr_rank'] > FORCED_IN_N].sort_values('mr_rank').copy()
+
+    ws2_failures     = set2_candidates[
+        set2_candidates['weinstein_stage2'] != True
+    ].copy()
+    ws2_fail_symbols = set(ws2_failures['symbol'])
+
+    # Drop WS2 failures
+    set2_pool = set2_candidates[
+        set2_candidates['weinstein_stage2'] == True
+    ].copy()
+
+    # Re-rank from 13
+    set2_pool = set2_pool.reset_index(drop=True)
+    set2_pool['set2_rank'] = range(FORCED_IN_N + 1,
+                                    FORCED_IN_N + 1 + len(set2_pool))
+
+    # Keep re-ranks 13 to BUFFER_ZONE
+    set2_pool = set2_pool[set2_pool['set2_rank'] <= BUFFER_ZONE].copy()
+
+    print(f"\nSET 2 pool (re-ranked 13-{BUFFER_ZONE} after WS filter): "
+          f"{len(set2_pool)} stocks")
+    print(f"  WS2 failures dropped : {len(ws2_failures)}  "
+          f"{sorted(ws2_fail_symbols)}")
+
+    # HOLDs forced out by WS2 failure
+    ws2_forced_sells = ws2_fail_symbols & current_holdings
+    if ws2_forced_sells:
+        print(f"  Holdings WS2-forced out (SELL): {sorted(ws2_forced_sells)}")
+
+    # ── SET 2 selection: HOLDs first, fill with non-holders ───────────────
+    set2_holds = set2_pool[
+        set2_pool['symbol'].isin(current_holdings)
+    ].sort_values('set2_rank')
+
+    set2_nonholders = set2_pool[
+        ~set2_pool['symbol'].isin(current_holdings)
+    ].sort_values('norm_momentum_score', ascending=False)
+
+    holds_selected  = set(set2_holds.head(SET2_TARGET)['symbol'])
+    slots_remaining = SET2_TARGET - len(holds_selected)
+
+    fill_selected = (
+        set(set2_nonholders.head(slots_remaining)['symbol'])
+        if slots_remaining > 0 else set()
     )
-    # Holdings forced out by rank
-    rank_forced_out = set(
-        holdings_df[holdings_df['mr_rank'] > BUFFER_ZONE]['symbol']
-    )
-    # Holdings forced out by Weinstein failure (rank was fine)
-    weinstein_forced_out_holdings = set(
-        holdings_df[
-            (holdings_df['mr_rank'] <= BUFFER_ZONE) &
-            (holdings_df['weinstein_stage2'] != True)
-        ]['symbol']
-    )
-    forced_out = rank_forced_out | weinstein_forced_out_holdings | unscored
 
-    print(f"\nReconstitution inputs:")
-    print(f"  Current holdings     : {len(current_holdings)}"
-          f"{' (first run — empty)' if is_first_run else ''}")
-    print(f"  Scoreable holdings   : {len(scoreable_holdings)}")
-    print(f"  Retained (rank<={BUFFER_ZONE}, W=True)  : "
-          f"{len(retained)}  {sorted(retained)}")
-    print(f"  Forced out (rank)    : {len(rank_forced_out)} {sorted(rank_forced_out)}")
-    print(f"  Forced out (Weinstein): {len(weinstein_forced_out_holdings)} "
-          f"{sorted(weinstein_forced_out_holdings)}")
+    set2_selected  = holds_selected | fill_selected
+    watchlist_pool = set(set2_pool['symbol']) - set2_selected
 
-    # ── Step 2: Forced-in — top FORCED_IN_N non-holders, bypass Weinstein ──
-    non_holders_df = df[~df['symbol'].isin(scoreable_holdings)].copy()
-    forced_in = set(
-        non_holders_df.sort_values('mr_rank')
-        .head(FORCED_IN_N)['symbol']
-    )
-    print(f"  Forced in (top {FORCED_IN_N}, W bypassed): "
-          f"{len(forced_in)}  {sorted(forced_in)}")
+    print(f"\nSET 2 selection ({SET2_TARGET} slots):")
+    print(f"  HOLDs retained   : {len(holds_selected)}  {sorted(holds_selected)}")
+    print(f"  Non-holder fills : {len(fill_selected)}  {sorted(fill_selected)}")
+    print(f"  Watchlist        : {len(watchlist_pool)}  {sorted(watchlist_pool)}")
 
-    # ── Step 3: Edge case ──
-    combined = retained | forced_in
-    if len(combined) > PORTFOLIO_N:
-        excess = len(combined) - PORTFOLIO_N
-        retained_ranked = (
-            df[df['symbol'].isin(retained)]
-            .sort_values('mr_rank', ascending=False)
-        )
-        drop_symbols = set(retained_ranked.head(excess)['symbol'])
-        print(f"  Edge case: dropping {excess} lowest-ranked retained: "
-              f"{sorted(drop_symbols)}")
-        retained   -= drop_symbols
-        forced_out |= drop_symbols
-
-    # ── Step 4: Fill slots — must pass Weinstein ──
-    slots_filled    = retained | forced_in
-    slots_remaining = PORTFOLIO_N - len(slots_filled)
-    print(f"  Slots after forced_in + retained: {len(slots_filled)}, "
-          f"remaining to fill: {slots_remaining}")
-
-    # Candidates: non-holders, not already placed, rank <= BUFFER_ZONE
-    fill_candidates = df[
-        ~df['symbol'].isin(slots_filled) &
-        ~df['symbol'].isin(scoreable_holdings) &
-        (df['mr_rank'] <= BUFFER_ZONE)
-    ].sort_values('mr_rank').copy()
-
-    # Track Weinstein rejects in fill pool (rank 13-BUFFER_ZONE, fail Weinstein)
-    weinstein_fill_rejects = fill_candidates[
-        fill_candidates['weinstein_stage2'] != True
-    ][['symbol', 'mr_rank', 'norm_momentum_score',
-       'weighted_z', 'ret_12m1m', 'weinstein_stage2']].copy()
-
-    # Actual fill: must pass Weinstein
-    fill_pool = fill_candidates[
-        fill_candidates['weinstein_stage2'] == True
-    ]
-    fill_symbols = set(fill_pool.head(slots_remaining)['symbol'])
-
-    # Emergency fill if short
-    still_needed = slots_remaining - len(fill_symbols)
-    if still_needed > 0:
-        print(f"  WARNING: Weinstein fill short by {still_needed} — "
-              f"emergency fill without Weinstein")
-        emergency_pool = df[
-            ~df['symbol'].isin(slots_filled | fill_symbols) &
-            ~df['symbol'].isin(scoreable_holdings)
-        ].sort_values('mr_rank')
-        emergency = set(emergency_pool.head(still_needed)['symbol'])
-        fill_symbols |= emergency
-
-    print(f"  Fill symbols (W=True): {len(fill_symbols)}  {sorted(fill_symbols)}")
-    print(f"  Weinstein fill rejects: {len(weinstein_fill_rejects)}")
-
-    # ── Step 5: Final TOP_25 ──
-    top25_symbols = retained | forced_in | fill_symbols
+    # ── Final TOP_25 ────────────────────────────────────────────────────────
+    top25_symbols = set1_symbols | set2_selected
     assert len(top25_symbols) == PORTFOLIO_N, \
         (f"TOP_25 assembly error: got {len(top25_symbols)}, "
          f"expected {PORTFOLIO_N}.")
 
-    # ── Step 6: Assign actions ──
+    # ── Assign actions ──────────────────────────────────────────────────────
     def get_action(row):
         sym = row['symbol']
-        in_top25   = sym in top25_symbols
-        was_holder = sym in current_holdings
-        if in_top25:
-            return 'HOLD' if was_holder else 'BUY'
-        if was_holder:
+        if sym in top25_symbols:
+            return 'HOLD' if sym in current_holdings else 'BUY'
+        if sym in current_holdings:
             return 'SELL'
-        if int(row['mr_rank']) <= BUFFER_ZONE:
+        if sym in watchlist_pool:
             return 'WATCHLIST'
         return None
 
     df['action'] = df.apply(get_action, axis=1)
 
-    # ── Step 7: Tier ──
+    # ── Assign tiers ────────────────────────────────────────────────────────
     def get_tier(row):
         sym = row['symbol']
-        if sym in top25_symbols:
-            return 'TOP_25'
-        if sym in (forced_out | unscored):
-            return 'SELL'
-        if row['action'] == 'WATCHLIST':
-            return 'WATCHLIST'
+        if sym in top25_symbols:      return 'TOP_25'
+        if sym in current_holdings:   return 'SELL'
+        if sym in watchlist_pool:     return 'WATCHLIST'
         return None
 
     df['tier'] = df.apply(get_tier, axis=1)
 
-    # ── Step 8: Build output ──
+    # Add unscored holdings as SELL rows
     output_df = df[df['action'].notna()].copy()
 
     if unscored:
@@ -194,44 +148,28 @@ def apply_reconstitution(
         output_df = pd.concat([output_df, unscored_rows], ignore_index=True)
 
     print(f"\nReconstitution output:")
-    print(f"  TOP_25  : {(output_df['tier'] == 'TOP_25').sum()}")
-    print(f"    BUY   : {(output_df['action'] == 'BUY').sum()}")
-    print(f"    HOLD  : {(output_df['action'] == 'HOLD').sum()}")
-    print(f"  SELL    : {(output_df['action'] == 'SELL').sum()}")
-    print(f"  WATCHLIST:{(output_df['action'] == 'WATCHLIST').sum()}")
+    print(f"  TOP_25    : {(output_df['tier'] == 'TOP_25').sum()}")
+    print(f"    HOLD    : {(output_df['action'] == 'HOLD').sum()}")
+    print(f"    BUY     : {(output_df['action'] == 'BUY').sum()}")
+    print(f"  SELL      : {(output_df['action'] == 'SELL').sum()}")
+    print(f"  WATCHLIST : {(output_df['action'] == 'WATCHLIST').sum()}")
 
-    # ── Step 9: Build Weinstein reject log ──
+    # ── Weinstein reject log ────────────────────────────────────────────────
     weinstein_rejects = pd.DataFrame()
 
-    # Category 1: holdings forced out by Weinstein
-    if weinstein_forced_out_holdings:
-        holding_rejects = df[
-            df['symbol'].isin(weinstein_forced_out_holdings)
-        ][['symbol', 'mr_rank', 'norm_momentum_score',
-           'weighted_z', 'ret_12m1m', 'weinstein_stage2']].copy()
-        holding_rejects['rejection_stage']  = 'RECONSTITUTION_HOLDING'
-        holding_rejects['rejection_reason'] = (
-            'Current holding: rank within buffer but weinstein_stage2=False '
-            '(trend reversal — forced out)'
+    if len(ws2_failures) > 0:
+        rej = ws2_failures[['symbol', 'mr_rank', 'norm_momentum_score',
+                             'weighted_z', 'ret_12m1m',
+                             'weinstein_stage2']].copy()
+        rej['rejection_stage'] = rej['symbol'].apply(
+            lambda s: 'WS2_HOLDING_FORCED_OUT'
+                      if s in current_holdings else 'WS2_NONHOLDER_EXCLUDED'
         )
-        weinstein_rejects = pd.concat(
-            [weinstein_rejects, holding_rejects], ignore_index=True
+        rej['rejection_reason'] = rej['symbol'].apply(
+            lambda s: 'Current holding: WS2=False — forced out (trend reversal)'
+                      if s in current_holdings
+                      else 'Non-holder: WS2=False — excluded from SET 2 pool'
         )
-
-    # Category 2: fill pool rejects (rank 13-BUFFER_ZONE, fail Weinstein)
-    if len(weinstein_fill_rejects) > 0:
-        weinstein_fill_rejects['rejection_stage']  = 'RECONSTITUTION_FILL'
-        weinstein_fill_rejects['rejection_reason'] = (
-            'Non-holder: ranked within fill zone but weinstein_stage2=False '
-            '(trend reversal — blocked from entry)'
-        )
-        weinstein_rejects = pd.concat(
-            [weinstein_rejects, weinstein_fill_rejects], ignore_index=True
-        )
-
-    if len(weinstein_rejects) > 0:
-        weinstein_rejects = weinstein_rejects.sort_values(
-            ['rejection_stage', 'mr_rank']
-        ).reset_index(drop=True)
+        weinstein_rejects = rej.sort_values('mr_rank').reset_index(drop=True)
 
     return output_df, top25_symbols, weinstein_rejects
