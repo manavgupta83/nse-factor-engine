@@ -138,6 +138,14 @@ COMBO_COLOR = {
     "INSUFFICIENT_DATA":        colors.HexColor("#37474F"),
 }
 
+BREADTH_LABEL_COLOR = {
+    "BROAD_BULL":  colors.HexColor("#1B5E20"),
+    "NARROW_BULL": colors.HexColor("#2E7D32"),
+    "MIXED":       colors.HexColor("#37474F"),
+    "NARROW_BEAR": colors.HexColor("#B71C1C"),
+    "BROAD_BEAR":  colors.HexColor("#7F0000"),
+}
+
 SIGNAL_COLOR = {
     "BULLISH":           colors.HexColor("#2E7D32"),
     "STRONG_BREADTH":    colors.HexColor("#1B5E20"),
@@ -460,6 +468,32 @@ if breadth_latest is not None:
         f"advancing: {adv}  declining: {dec}  unchanged: {unch}</font>",
         S_DESC
     ), SP(1.5)]
+
+    # Composite breadth banner
+    b_label    = str(bl["breadth_label"])
+    b_score    = int(bl["breadth_score"])
+    b_narrative = str(bl["breadth_narrative"])
+    b_color    = BREADTH_LABEL_COLOR.get(b_label, MUTED)
+    S_BN = S("bn", fontName="Helvetica-Bold", fontSize=13, textColor=colors.white,
+              leading=16, alignment=TA_CENTER)
+    S_BND = S("bnd", fontSize=9, textColor=colors.HexColor("#CCCCCC"),
+               leading=12, alignment=TA_CENTER)
+    S_BSC = S("bsc", fontSize=9, textColor=colors.HexColor("#AAAAAA"),
+               leading=11, alignment=TA_CENTER)
+    banner = Table([
+        [Paragraph(f"{b_label.replace('_', ' ')}  ({b_score:+d} / 7)", S_BN)],
+        [Paragraph(b_narrative, S_BND)],
+    ], colWidths=[172*mm])
+    banner.setStyle(TableStyle([
+        ("BACKGROUND",    (0,0),(-1,-1), b_color),
+        ("TOPPADDING",    (0,0),(-1,-1), 10),
+        ("BOTTOMPADDING", (0,0),(-1,-1), 10),
+        ("LEFTPADDING",   (0,0),(-1,-1), 12),
+        ("RIGHTPADDING",  (0,0),(-1,-1), 12),
+        ("ALIGN",         (0,0),(-1,-1), "CENTER"),
+        ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
+    ]))
+    story += [banner, SP(2)]
 
     ad_sig = "BULLISH" if bl["ad_line"] > 0 else ("BEARISH" if bl["ad_line"] < 0 else "NEUTRAL")
     story += [breadth_row("A/D Line", _bfmt(bl["ad_line"], ".0f"), ad_sig,

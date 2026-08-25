@@ -56,11 +56,14 @@ NH_NL_WINDOW = 252   # 52-week in trading days
 EMA_SHORT    = 19    # McClellan fast EMA
 EMA_LONG     = 39    # McClellan slow EMA
 
-# Interpretation bands (calibrate after ~4 weeks of live data)
-MCCLELLAN_OB =  100
-MCCLELLAN_OS = -100
-TRIN_BEARISH =  1.20
-TRIN_BULLISH =  0.80
+# Interpretation bands (calibrated on 346 days of NSE 495-stock universe, Aug 2026)
+# McClellan: US convention (±100) does not apply — NSE 495-stock range is [-44, +63]
+# Using ±40 (~2 std devs) as overbought/oversold threshold
+MCCLELLAN_OB =  40
+MCCLELLAN_OS = -40
+# TRIN: NSE mean is 0.85, habitually below 1.0. Revised bands reflect actual distribution.
+TRIN_BEARISH =  1.50
+TRIN_BULLISH =  0.60
 ADR_BULL_ZONE = 1.50
 ADR_BEAR_ZONE = 0.67
 
@@ -226,6 +229,78 @@ daily["mcclellan_signal"] = daily["mcclellan"].apply(_mcclellan_signal)
 daily["trin_signal"]      = daily["trin"].apply(_trin_signal)
 daily["adr_signal"]       = daily["adr"].apply(_adr_signal)
 
+# -- Composite breadth score --------------------------------------------------
+def _composite_score(row):
+    score = 0
+    if pd.notna(row["ad_line"]):
+        score += 1 if row["ad_line"] > 0 else -1
+    if row["adr_signal"] == "STRONG_BREADTH":  score += 1
+    elif row["adr_signal"] == "WEAK_BREADTH":  score -= 1
+    if pd.notna(row["new_highs"]) and pd.notna(row["new_lows"]):
+        if row["new_highs"] > row["new_lows"]:   score += 1
+        elif row["new_lows"] > row["new_highs"]: score -= 1
+    if pd.notna(row["mcclellan"]):
+        score += 1 if row["mcclellan"] > 0 else -1
+    if row["trin_signal"] == "BULLISH":   score += 1
+    elif row["trin_signal"] == "BEARISH": score -= 1
+    if pd.notna(row["pct_above_50sma"]):
+        if row["pct_above_50sma"] > 60:   score += 1
+        elif row["pct_above_50sma"] < 40: score -= 1
+    if pd.notna(row["pct_above_200sma"]):
+        if row["pct_above_200sma"] > 60:   score += 1
+        elif row["pct_above_200sma"] < 40: score -= 1
+    return score
+
+def _breadth_label(score):
+    if score >=  4: return "BROAD_BULL"
+    if score >=  1: return "NARROW_BULL"
+    if score ==  0: return "MIXED"
+    if score >= -3: return "NARROW_BEAR"
+    return "BROAD_BEAR"
+
+def _breadth_narrative(row):
+    score = row["breadth_score"]
+    label = row["breadth_label"]
+    mc    = row["mcclellan"]
+    trin  = row["trin"]
+    p50   = row["pct_above_50sma"]
+    ad    = row["ad_line"]
+    nh    = row["new_highs"]
+    nl    = row["new_lows"]
+
+    base = {
+        "BROAD_BULL":  "Wide participation — majority of stocks advancing on healthy breadth.",
+        "NARROW_BULL": "Positive bias but leadership is thin — rally not broadly confirmed.",
+        "MIXED":       "No clear directional edge — bulls and bears evenly matched.",
+        "NARROW_BEAR": "Breadth deteriorating — more stocks declining than advancing.",
+        "BROAD_BEAR":  "Wide distribution — majority of stocks under pressure.",
+    }.get(label, "")
+
+    flags = []
+    if pd.notna(mc) and pd.notna(trin):
+        if mc > 0 and trin >= 0.60:
+            flags.append("breadth momentum positive but volume favouring decliners")
+        elif mc <= 0 and trin < 0.60:
+            flags.append("breadth momentum negative but advancing stocks absorbing heavy volume — narrow concentrated buying")
+    if pd.notna(p50) and pd.notna(ad):
+        if ad < 0 and p50 > 60:
+            flags.append("A/D Line negative but majority above 50d SMA — recent recovery not yet in cumulative breadth")
+        elif ad > 0 and p50 < 40:
+            flags.append("A/D Line positive but few stocks above 50d SMA — cumulative breadth masking short-term weakness")
+    if pd.notna(nh) and pd.notna(nl):
+        if label in ("NARROW_BEAR", "BROAD_BEAR") and nh > nl:
+            flags.append("new highs still outnumber new lows — damage not yet at extremes")
+        elif label in ("NARROW_BULL", "BROAD_BULL") and nl > nh:
+            flags.append("new lows outnumber new highs despite positive bias — watch for breadth rollover")
+
+    if flags:
+        return base + " " + "; ".join(flags).capitalize() + "."
+    return base
+
+daily["breadth_score"]     = daily.apply(_composite_score, axis=1)
+daily["breadth_label"]     = daily["breadth_score"].apply(_breadth_label)
+daily["breadth_narrative"] = daily.apply(_breadth_narrative, axis=1)
+
 # -- Metadata + column order --------------------------------------------------
 daily["as_of_date"]    = as_of_date
 daily["run_date"]      = RUN_DATE
@@ -239,6 +314,7 @@ col_order = [
     "ema_19", "ema_39", "mcclellan", "mcclellan_signal",
     "adv_volume", "dec_volume", "trin", "trin_signal",
     "pct_above_50sma", "pct_above_200sma",
+    "breadth_score", "breadth_label", "breadth_narrative",
 ]
 daily = daily[col_order]
 
@@ -269,4 +345,6 @@ print(f"  McClellan        : {latest['mcclellan']:.2f}  [{latest['mcclellan_sign
 print(f"  TRIN             : {latest['trin']:.3f}  [{latest['trin_signal']}]")
 print(f"  % > 50-day SMA   : {latest['pct_above_50sma']:.1f}%")
 print(f"  % > 200-day SMA  : {p200:.1f}%" if pd.notna(p200) else "  % > 200-day SMA  : NaN")
+print(f"  Breadth Score    : {int(latest['breadth_score'])}  [{latest['breadth_label']}]")
+print(f"  Narrative        : {latest['breadth_narrative']}")
 print("=" * 60)
