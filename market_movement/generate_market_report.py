@@ -6,9 +6,14 @@ Writes: market_movement/data/market_movement_report_{RUN_DATE}.pdf
 """
 
 import sys
+import io
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 
 try:
     from reportlab.lib.pagesizes import A4
@@ -230,6 +235,69 @@ def breadth_row(label, value_str, signal_str, desc_str):
     outer.setStyle(card_style())
     return outer
 
+def make_breadth_chart(chart_df, y_cols, colors_list, labels,
+                        hlines=None, fill_zero=False, width_mm=174, height_mm=38):
+    """
+    Render a breadth trend chart as a reportlab Image (in-memory PNG).
+
+    chart_df   : DataFrame with 'date' column + y_cols
+    y_cols     : list of column names to plot
+    colors_list: list of hex colour strings, one per y_col
+    labels     : list of legend labels, one per y_col
+    hlines     : list of (y_value, colour, linestyle) for reference lines
+    fill_zero  : if True, fill area between first y_col and zero line
+    """
+    fig_w = width_mm / 25.4
+    fig_h = height_mm / 25.4
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+
+    # Dark background matching report
+    fig.patch.set_facecolor("#0D1117")
+    ax.set_facecolor("#161B22")
+
+    dates = chart_df["date"]
+
+    for col, col_color, label in zip(y_cols, colors_list, labels):
+        vals = chart_df[col]
+        ax.plot(dates, vals, color=col_color, linewidth=0.9, label=label)
+        if fill_zero:
+            ax.fill_between(dates, vals, 0,
+                            where=(vals >= 0), color=col_color, alpha=0.15)
+            ax.fill_between(dates, vals, 0,
+                            where=(vals < 0),  color="#F85149", alpha=0.15)
+
+    # Reference lines
+    if hlines:
+        for yval, hcol, hstyle in hlines:
+            ax.axhline(yval, color=hcol, linewidth=0.6, linestyle=hstyle)
+
+    # X-axis: monthly ticks, YYYY-MM labels
+    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=2))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m"))
+    plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha="right")
+    ax.tick_params(axis="x", colors="#8B949E", labelsize=5.5, length=2)
+    ax.tick_params(axis="y", colors="#8B949E", labelsize=6, length=2)
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#30363D")
+        spine.set_linewidth(0.4)
+
+    # Legend if multiple lines
+    if len(y_cols) > 1:
+        ax.legend(fontsize=5.5, loc="upper left",
+                  facecolor="#161B22", edgecolor="#30363D",
+                  labelcolor="#8B949E", framealpha=0.8)
+
+    plt.tight_layout(pad=0.3)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, facecolor=fig.get_facecolor())
+    buf.seek(0)
+    plt.close(fig)
+
+    from reportlab.platypus import Image as RLImage
+    return RLImage(buf, width=width_mm*mm, height=height_mm*mm)
+
+
 def index_row(sym, name):
     state = get(sym, "weinstein_state") or "INSUFFICIENT_DATA"
     ret   = get(sym, "ret_21d_pct")
@@ -372,6 +440,11 @@ story += [combo_card, SP(3), HR(), SP(2)]
 if breadth_latest is not None:
     bl = breadth_latest
 
+    # Chart data: up to 5 years, or all available
+    breadth["date"] = pd.to_datetime(breadth["date"])
+    cutoff   = breadth["date"].max() - pd.DateOffset(years=5)
+    chart_df = breadth[breadth["date"] >= cutoff].copy()
+
     def _bfmt(v, fmt=".1f"):
         return "—" if pd.isna(v) else f"{v:{fmt}}"
 
@@ -390,26 +463,52 @@ if breadth_latest is not None:
 
     ad_sig = "BULLISH" if bl["ad_line"] > 0 else ("BEARISH" if bl["ad_line"] < 0 else "NEUTRAL")
     story += [breadth_row("A/D Line", _bfmt(bl["ad_line"], ".0f"), ad_sig,
-        "Cumulative advancing minus declining. Rising = broad participation."), SP(1.5)]
+        "Cumulative advancing minus declining. Rising = broad participation."), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["ad_line"], ["#58A6FF"], ["A/D Line"],
+        hlines=[(0, "#8B949E", "--")], fill_zero=True
+    ), SP(1.5)]
 
     story += [breadth_row("Adv / Dec Ratio", _bfmt(bl["adr"], ".3f"), str(bl["adr_signal"]),
-        ">1.5 = strong breadth  |  <0.67 = weak breadth"), SP(1.5)]
+        ">1.5 = strong breadth  |  <0.67 = weak breadth"), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["adr"], ["#3FB950"], ["ADR"],
+        hlines=[(1.5, "#3FB950", ":"), (1.0, "#8B949E", "--"), (0.67, "#F85149", ":")]
+    ), SP(1.5)]
 
     nh = int(bl["new_highs"]); nl = int(bl["new_lows"])
     nh_sig = "BULLISH" if nh > nl else ("BEARISH" if nl > nh else "NEUTRAL")
     story += [breadth_row("52W Highs / Lows", f"{nh} H  /  {nl} L", nh_sig,
-        "New 52-week highs vs lows. More highs = broadening participation."), SP(1.5)]
+        "New 52-week highs vs lows. More highs = broadening participation."), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["new_highs", "new_lows"], ["#3FB950", "#F85149"], ["New Highs", "New Lows"],
+        hlines=[(0, "#8B949E", "--")]
+    ), SP(1.5)]
 
     story += [breadth_row("McClellan Osc", _bfmt(bl["mcclellan"], ".2f"), str(bl["mcclellan_signal"]),
-        "EMA(19) - EMA(39) of net advances. Bands: +100 overbought / -100 oversold"), SP(1.5)]
+        "EMA(19) - EMA(39) of net advances. Bands: +100 overbought / -100 oversold"), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["mcclellan"], ["#E6EDF3"], ["McClellan"],
+        hlines=[(100, "#F85149", ":"), (0, "#8B949E", "--"), (-100, "#3FB950", ":")],
+        fill_zero=True
+    ), SP(1.5)]
 
     story += [breadth_row("TRIN (Arms Index)", _bfmt(bl["trin"], ".3f"), str(bl["trin_signal"]),
-        "<0.8 = advancing vol dominates (bullish)  |  >1.2 = declining vol heavy (bearish)"), SP(1.5)]
+        "<0.8 = advancing vol dominates (bullish)  |  >1.2 = declining vol heavy (bearish)"), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["trin"], ["#E6A817"], ["TRIN"],
+        hlines=[(1.2, "#F85149", ":"), (1.0, "#8B949E", "--"), (0.8, "#3FB950", ":")]
+    ), SP(1.5)]
 
     p50 = bl["pct_above_50sma"]
     p50_sig = "BULLISH" if (pd.notna(p50) and p50 > 60) else ("BEARISH" if (pd.notna(p50) and p50 < 40) else "NEUTRAL")
     story += [breadth_row("% > 50-day SMA", f"{_bfmt(p50)}%", p50_sig,
-        "Medium-term participation. >60% healthy  |  <40% deteriorating"), SP(1.5)]
+        "Medium-term participation. >60% healthy  |  <40% deteriorating"), SP(1)]
+    story += [make_breadth_chart(
+        chart_df, ["pct_above_50sma", "pct_above_200sma"],
+        ["#58A6FF", "#E6A817"], ["% > 50d SMA", "% > 200d SMA"],
+        hlines=[(60, "#3FB950", ":"), (40, "#F85149", ":")]
+    ), SP(1.5)]
 
     p200 = bl["pct_above_200sma"]
     p200_sig = ("BULLISH" if (pd.notna(p200) and p200 > 60)
@@ -417,6 +516,7 @@ if breadth_latest is not None:
                 else "NEUTRAL" if pd.notna(p200) else "INSUFFICIENT_DATA")
     story += [breadth_row("% > 200-day SMA", f"{_bfmt(p200)}%" if pd.notna(p200) else "—", p200_sig,
         "Long-term participation. >60% = bull structure  |  <40% = bear territory"), SP(2)]
+    # chart already rendered above (combined with 50-day)
 
     story += [HR()]
 
