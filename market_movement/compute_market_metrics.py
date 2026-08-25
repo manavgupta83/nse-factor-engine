@@ -65,7 +65,7 @@ PRIMARY_MARKET = "^NSEI"
 
 # market_movement consumes these 9 tickers only
 MM_SYMBOLS = {
-    "^NSEI", "^CRSLDX", "^NSEMDCP50", "NIFTY_MIDCAP_100.NS",
+    "^NSEI", "^CRSLDX", "^NSEMDCP50", "NIFTYMIDCAP150.NS",
     "SML100CASE.NS", "^NSEBANK", "^CNXIT", "^CNXPHARMA", "^INDIAVIX",
 }
 

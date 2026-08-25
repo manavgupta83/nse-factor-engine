@@ -188,33 +188,34 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         await query.message.reply_text('Pipeline complete. Generating reports...')
 
-        parquet_ready = await wait_for_parquet(query)
-        if not parquet_ready:
-            return
+        if mode == 'rebalance':
+            # Portfolio PDFs — rebalance only
+            parquet_ready = await wait_for_parquet(query)
+            if not parquet_ready:
+                return
 
-        # Portfolio PDFs
-        fmt_proc = await asyncio.create_subprocess_exec(
-            *FORMAT_PDF_CMD,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        fmt_stdout, fmt_stderr = await fmt_proc.communicate()
-
-        if fmt_proc.returncode == 0:
-            for pdf_path in fmt_stdout.decode('utf-8', errors='replace').strip().splitlines():
-                p = Path(pdf_path.strip())
-                if p.exists():
-                    with open(p, 'rb') as f:
-                        await query.message.reply_document(f, filename=p.name)
-                else:
-                    await query.message.reply_text(f'PDF not found: {p.name}')
-        else:
-            err = fmt_stderr.decode('utf-8', errors='replace')[-500:]
-            await query.message.reply_text(
-                f'Portfolio PDF failed:\n<pre>{err}</pre>', parse_mode='HTML'
+            fmt_proc = await asyncio.create_subprocess_exec(
+                *FORMAT_PDF_CMD,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
+            fmt_stdout, fmt_stderr = await fmt_proc.communicate()
 
-        # Market movement PDF
+            if fmt_proc.returncode == 0:
+                for pdf_path in fmt_stdout.decode('utf-8', errors='replace').strip().splitlines():
+                    p = Path(pdf_path.strip())
+                    if p.exists():
+                        with open(p, 'rb') as f:
+                            await query.message.reply_document(f, filename=p.name)
+                    else:
+                        await query.message.reply_text(f'PDF not found: {p.name}')
+            else:
+                err = fmt_stderr.decode('utf-8', errors='replace')[-500:]
+                await query.message.reply_text(
+                    f'Portfolio PDF failed:\n<pre>{err}</pre>', parse_mode='HTML'
+                )
+
+        # Market movement PDF — both modes
         run_date_str = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%d%m%Y')
         await send_pdf(
             query, MKT_PDF_DIR / f'market_movement_report_{run_date_str}.pdf',

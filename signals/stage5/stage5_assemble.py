@@ -48,7 +48,14 @@ print(f"as_of_date (T) inside file: {signals['as_of_date'].iloc[0]}")
 
 universe_result = compute_in_universe(signals, run_date_str, BASE)
 merged_full = signals.merge(universe_result, on='symbol', how='left')
-assert merged_full['in_universe'].notnull().all(), "Nulls in in_universe after merge -- universe file missing symbols"
+dropped_from_index = merged_full[merged_full['in_universe'].isnull()]['symbol'].tolist()
+if dropped_from_index:
+    print(f"WARNING: {len(dropped_from_index)} signal symbol(s) not in today's universe snapshot "
+          f"(dropped from index mid-cycle): {dropped_from_index}")
+    print(f"  Treating as in_universe=False -- retained in output with NaN ranks.")
+    merged_full['in_universe']   = merged_full['in_universe'].fillna(False).infer_objects(copy=False)
+    merged_full['passes_mktcap'] = merged_full['passes_mktcap'].fillna(False).infer_objects(copy=False)
+    merged_full['passes_adtv']   = merged_full['passes_adtv'].fillna(False).infer_objects(copy=False)
 
 n_full = len(merged_full)
 in_universe_subset = merged_full[merged_full['in_universe'] == True].copy()

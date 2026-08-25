@@ -22,7 +22,7 @@ Canonical 12 tickers and their consumers:
   ^NSEI              market_movement
   ^CRSLDX            market_movement, hmm_nifty_indices, liquidity_risk_index
   ^NSEMDCP50         market_movement
-  NIFTY_MIDCAP_100.NS market_movement
+  NIFTYMIDCAP150.NS   market_movement  (replaces stale NIFTY_MIDCAP_100.NS)
   SML100CASE.NS      market_movement
   ^NSEBANK           market_movement
   ^CNXIT             market_movement
@@ -55,7 +55,7 @@ END_DATE = date.today()
 RUN_DATE = END_DATE.strftime("%d%m%Y")
 
 INDEX_SYMBOLS = [
-    "^NSEI", "^CRSLDX", "^NSEMDCP50", "NIFTY_MIDCAP_100.NS",
+    "^NSEI", "^CRSLDX", "^NSEMDCP50", "NIFTYMIDCAP150.NS",
     "SML100CASE.NS", "^NSEBANK", "^CNXIT", "^CNXPHARMA", "^INDIAVIX",
     "^CNX100", "NIFTYMIDCAP150.NS", "NIFTYSMLCAP250.NS",
 ]

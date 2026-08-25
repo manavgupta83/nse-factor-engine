@@ -50,7 +50,7 @@ SECTORAL = [
     ("^CNXIT",              "Nifty IT"),
     ("^CNXPHARMA",          "Nifty Pharma"),
     ("^NSEMDCP50",          "Nifty Midcap 50"),
-    ("NIFTY_MIDCAP_100.NS", "Nifty Midcap 100"),
+    ("NIFTYMIDCAP150.NS",   "Nifty Midcap 150"),
     ("SML100CASE.NS",       "Nifty Smallcap 100"),
 ]
 
