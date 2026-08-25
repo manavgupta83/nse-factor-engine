@@ -128,9 +128,14 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
             env=env,
         )
 
+        monitor_summary = []
+
         async def read_stdout():
             async for line_bytes in process.stdout:
                 line = line_bytes.decode('utf-8', errors='replace').rstrip()
+
+                if mode == 'monitor' and any(x in line for x in ('Would BUY', 'Would HOLD', 'Would SELL')):
+                    monitor_summary.append(line.strip())
 
                 if 'STARTING STAGE 1' in line:
                     await query.message.reply_text('🔄 Stage 1 — Universe fetch started')
@@ -187,6 +192,13 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         await query.message.reply_text('Pipeline complete. Generating reports...')
+
+        if mode == 'monitor':
+            if monitor_summary:
+                summary_text = 'If rebalanced TODAY\n' + '\n'.join(monitor_summary)
+                await query.message.reply_text(summary_text)
+            else:
+                await query.message.reply_text('Monitor mode complete — no rebalance summary captured.')
 
         if mode == 'rebalance':
             # Portfolio PDFs — rebalance only
