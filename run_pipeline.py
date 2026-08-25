@@ -200,6 +200,11 @@ def main():
     )
 
     run_stage(
+        "MARKET MOVEMENT — Compute Breadth Metrics",
+        BASE / "market_movement" / "compute_breadth_metrics.py",
+    )
+
+    run_stage(
         "MARKET MOVEMENT — Compute Metrics",
         BASE / "market_movement" / "compute_market_metrics.py",
     )

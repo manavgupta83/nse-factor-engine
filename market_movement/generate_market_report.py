@@ -25,7 +25,8 @@ if not Path("signals").is_dir():
     sys.exit("ERROR: Run from repo root (nse-factor-engine/)")
 
 DATA_DIR   = Path("market_movement/data")
-INPUT_PATH = DATA_DIR / "market_movement_metrics.parquet"
+INPUT_PATH    = DATA_DIR / "market_movement_metrics.parquet"
+BREADTH_PATH  = DATA_DIR / "breadth_metrics.parquet"
 RUN_DATE   = pd.Timestamp.now(tz='Asia/Kolkata').strftime("%d%m%Y")
 OUT_PATH   = DATA_DIR / f"market_movement_report_{RUN_DATE}.pdf"
 
@@ -36,6 +37,15 @@ if not INPUT_PATH.exists():
 df       = pd.read_parquet(INPUT_PATH)
 as_of    = pd.to_datetime(df["as_of_date"].iloc[0]).strftime("%d %b %Y")
 run_date = pd.to_datetime(df["run_date"].iloc[0]).strftime("%d %b %Y")
+
+# Load breadth (optional — report continues without it)
+breadth_latest = None
+if BREADTH_PATH.exists():
+    breadth = pd.read_parquet(BREADTH_PATH)
+    breadth_latest = breadth.sort_values("date").iloc[-1]
+    print(f"Breadth data loaded: {len(breadth)} rows, latest {breadth_latest['date'].date()}")
+else:
+    print(f"WARNING: {BREADTH_PATH} not found — breadth section will be skipped.")
 
 def get(symbol, col):
     row = df[df["symbol"] == symbol]
@@ -123,6 +133,17 @@ COMBO_COLOR = {
     "INSUFFICIENT_DATA":        colors.HexColor("#37474F"),
 }
 
+SIGNAL_COLOR = {
+    "BULLISH":           colors.HexColor("#2E7D32"),
+    "STRONG_BREADTH":    colors.HexColor("#1B5E20"),
+    "OVERBOUGHT":        colors.HexColor("#B8860B"),
+    "BEARISH":           colors.HexColor("#B71C1C"),
+    "WEAK_BREADTH":      colors.HexColor("#B71C1C"),
+    "OVERSOLD":          colors.HexColor("#B8860B"),
+    "NEUTRAL":           colors.HexColor("#37474F"),
+    "INSUFFICIENT_DATA": colors.HexColor("#37474F"),
+}
+
 # ── Colors ────────────────────────────────────────
 BG     = colors.HexColor("#0D1117")
 CARD   = colors.HexColor("#161B22")
@@ -189,6 +210,25 @@ def pill(label, color):
         ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
     ]))
     return t
+
+def breadth_row(label, value_str, signal_str, desc_str):
+    sig_color = SIGNAL_COLOR.get(signal_str, MUTED)
+    inner = Table([[
+        Paragraph(label, S("bl", fontName="Helvetica-Bold", fontSize=10, textColor=TEXT, leading=13)),
+        Paragraph(value_str, S("bv", fontName="Helvetica-Bold", fontSize=10, textColor=TEXT, leading=13, alignment=TA_RIGHT)),
+        pill(signal_str.replace("_", " "), sig_color),
+        Paragraph(desc_str, S_DESC),
+    ]], colWidths=[38*mm, 28*mm, 38*mm, 68*mm])
+    inner.setStyle(TableStyle([
+        ("VALIGN",       (0,0),(-1,-1), "MIDDLE"),
+        ("LEFTPADDING",  (0,0),(-1,-1), 0),
+        ("RIGHTPADDING", (0,0),(-1,-1), 0),
+        ("TOPPADDING",   (0,0),(-1,-1), 0),
+        ("BOTTOMPADDING",(0,0),(-1,-1), 0),
+    ]))
+    outer = Table([[inner]], colWidths=[174*mm])
+    outer.setStyle(card_style())
+    return outer
 
 def index_row(sym, name):
     state = get(sym, "weinstein_state") or "INSUFFICIENT_DATA"
@@ -326,9 +366,62 @@ combo_card.setStyle(TableStyle([
     ("ALIGN",         (0,0),(-1,-1), "CENTER"),
     ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
 ]))
-story += [combo_card, SP(3), HR()]
-story += [Paragraph(
-    "NSE Factor Engine  ·  Stage 8  ·  market_movement/compute_market_metrics.py  ·  Signal only. Not investment advice.",
+story += [combo_card, SP(3), HR(), SP(2)]
+
+# ── BREADTH SECTION ───────────────────────────────
+if breadth_latest is not None:
+    bl = breadth_latest
+
+    def _bfmt(v, fmt=".1f"):
+        return "—" if pd.isna(v) else f"{v:{fmt}}"
+
+    adv  = int(bl["adv_count"])
+    dec  = int(bl["dec_count"])
+    univ = int(bl["universe_size"])
+    unch = univ - adv - dec
+
+    story += [Paragraph("MARKET BREADTH", S_SEC), SP(1.5)]
+    story += [Paragraph(
+        f"<font color='#8B949E'>as of {pd.to_datetime(bl['date']).strftime('%d %b %Y')}  ·  "
+        f"universe: {univ} stocks  ·  "
+        f"advancing: {adv}  declining: {dec}  unchanged: {unch}</font>",
+        S_DESC
+    ), SP(1.5)]
+
+    ad_sig = "BULLISH" if bl["ad_line"] > 0 else ("BEARISH" if bl["ad_line"] < 0 else "NEUTRAL")
+    story += [breadth_row("A/D Line", _bfmt(bl["ad_line"], ".0f"), ad_sig,
+        "Cumulative advancing minus declining. Rising = broad participation."), SP(1.5)]
+
+    story += [breadth_row("Adv / Dec Ratio", _bfmt(bl["adr"], ".3f"), str(bl["adr_signal"]),
+        ">1.5 = strong breadth  |  <0.67 = weak breadth"), SP(1.5)]
+
+    nh = int(bl["new_highs"]); nl = int(bl["new_lows"])
+    nh_sig = "BULLISH" if nh > nl else ("BEARISH" if nl > nh else "NEUTRAL")
+    story += [breadth_row("52W Highs / Lows", f"{nh} H  /  {nl} L", nh_sig,
+        "New 52-week highs vs lows. More highs = broadening participation."), SP(1.5)]
+
+    story += [breadth_row("McClellan Osc", _bfmt(bl["mcclellan"], ".2f"), str(bl["mcclellan_signal"]),
+        "EMA(19) - EMA(39) of net advances. Bands: +100 overbought / -100 oversold"), SP(1.5)]
+
+    story += [breadth_row("TRIN (Arms Index)", _bfmt(bl["trin"], ".3f"), str(bl["trin_signal"]),
+        "<0.8 = advancing vol dominates (bullish)  |  >1.2 = declining vol heavy (bearish)"), SP(1.5)]
+
+    p50 = bl["pct_above_50sma"]
+    p50_sig = "BULLISH" if (pd.notna(p50) and p50 > 60) else ("BEARISH" if (pd.notna(p50) and p50 < 40) else "NEUTRAL")
+    story += [breadth_row("% > 50-day SMA", f"{_bfmt(p50)}%", p50_sig,
+        "Medium-term participation. >60% healthy  |  <40% deteriorating"), SP(1.5)]
+
+    p200 = bl["pct_above_200sma"]
+    p200_sig = ("BULLISH" if (pd.notna(p200) and p200 > 60)
+                else "BEARISH" if (pd.notna(p200) and p200 < 40)
+                else "NEUTRAL" if pd.notna(p200) else "INSUFFICIENT_DATA")
+    story += [breadth_row("% > 200-day SMA", f"{_bfmt(p200)}%" if pd.notna(p200) else "—", p200_sig,
+        "Long-term participation. >60% = bull structure  |  <40% = bear territory"), SP(2)]
+
+    story += [HR()]
+
+story += [SP(2), Paragraph(
+    "NSE Factor Engine  ·  Stage 8  ·  market_movement/  ·  Signal only. Not investment advice.",
     S_FOOT
 )]
 
