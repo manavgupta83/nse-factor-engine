@@ -95,7 +95,11 @@ def compute_mr_scores(signals_df, gate_id):
     return df.sort_values('mr_rank').reset_index(drop=True)
 
 
-# ── Standard reconstitution ────────────────────────────────────────────────────
+# ── Standard reconstitution (corrected v2) ────────────────────────────────────
+# Step 3: Holdings rank > 38 → removed.
+# Step 4: Non-holders rank <= 12 → forced in, each displaces lowest scoring holding.
+# Step 5: Remaining holdings rank <= 38 → retained.
+# Step 6: Fill remaining slots with non-holders by rank until count = 25.
 def reconstitute(ranked_df, current_holdings):
     if ranked_df.empty:
         return set(), {}
@@ -103,45 +107,51 @@ def reconstitute(ranked_df, current_holdings):
     all_scored        = set(ranked_df['symbol'])
     rank_lookup       = dict(zip(ranked_df['symbol'],
                                  ranked_df['mr_rank'].astype(int)))
-    weinstein_lookup  = dict(zip(ranked_df['symbol'],
-                                 ranked_df.get('weinstein_stage2',
-                                 pd.Series(True, index=ranked_df.index))))
+    score_lookup      = dict(zip(ranked_df['symbol'],
+                                 ranked_df['norm_momentum_score']))
     unscored_holdings = current_holdings - all_scored
-    scoreable         = current_holdings & all_scored
 
-    retained   = {s for s in scoreable if rank_lookup[s] <= BUFFER_ZONE}
-    forced_out = {s for s in scoreable if rank_lookup[s] > BUFFER_ZONE}
-    forced_out |= unscored_holdings
+    # Step 3: Remove holdings ranked > 38 or unscored
+    portfolio = {s for s in current_holdings
+                 if s in all_scored and rank_lookup[s] <= BUFFER_ZONE}
+    forced_out = (current_holdings - portfolio) | unscored_holdings
 
-    non_holders_ranked = (
-        ranked_df[~ranked_df['symbol'].isin(scoreable)]
-        .sort_values('mr_rank')
-    )
-    forced_in = set(non_holders_ranked.head(FORCED_IN_N)['symbol'])
+    # Step 4: Non-holders in ranks 1-12 → forced in
+    # Each one displaces the lowest momentum score holding in current portfolio
+    forced_in_candidates = ranked_df[
+        (ranked_df['mr_rank'] <= FORCED_IN_N) &
+        (~ranked_df['symbol'].isin(current_holdings))
+    ].sort_values('mr_rank')
 
-    combined = retained | forced_in
-    if len(combined) > PORTFOLIO_N:
-        excess = len(combined) - PORTFOLIO_N
-        retained_sorted = sorted(retained,
-                                 key=lambda s: rank_lookup[s], reverse=True)
-        drop       = set(retained_sorted[:excess])
-        forced_out |= drop
-        retained   -= drop
+    for _, row in forced_in_candidates.iterrows():
+        new_stock = row['symbol']
+        # Always displace the lowest scoring holding — unconditional
+        holdings_in_port = portfolio & current_holdings
+        if holdings_in_port:
+            weakest = min(holdings_in_port, key=lambda s: score_lookup.get(s, 0))
+            portfolio.discard(weakest)
+            forced_out.add(weakest)
+        portfolio.add(new_stock)
 
-    slots_filled    = retained | forced_in
-    slots_remaining = PORTFOLIO_N - len(slots_filled)
+    # Step 5: Remaining holdings rank <= 38 already in portfolio — nothing to do,
+    # they survived Step 3 and were not displaced in Step 4.
 
+    # Step 6: Fill remaining slots with non-holders by rank
+    slots_remaining = PORTFOLIO_N - len(portfolio)
     if slots_remaining > 0:
         fill_pool = ranked_df[
-            ~ranked_df['symbol'].isin(slots_filled) &
-            ~ranked_df['symbol'].isin(scoreable)
+            ~ranked_df['symbol'].isin(portfolio) &
+            ~ranked_df['symbol'].isin(current_holdings)
         ].sort_values('mr_rank')
-        fill_symbols = set(fill_pool.head(slots_remaining)['symbol'])
-    else:
-        fill_symbols = set()
+        for _, row in fill_pool.iterrows():
+            if slots_remaining == 0:
+                break
+            portfolio.add(row['symbol'])
+            slots_remaining -= 1
 
-    top25_symbols = retained | forced_in | fill_symbols
+    top25_symbols = portfolio
 
+    # Action map
     action_map = {}
     for s in top25_symbols:
         action_map[s] = 'HOLD' if s in current_holdings else 'BUY'
@@ -155,85 +165,68 @@ def reconstitute(ranked_df, current_holdings):
     return top25_symbols, action_map
 
 
-# ── Hybrid reconstitution ──────────────────────────────────────────────────────
+# ── Hybrid reconstitution (corrected v2) ──────────────────────────────────────
+SET2_TARGET = PORTFOLIO_N - FORCED_IN_N   # 13
+
 def reconstitute_hybrid(ranked_df, current_holdings):
     """
-    Weinstein applied in reconstitution, not as a pre-scoring gate.
-    - Forced-in (top FORCED_IN_N non-holders): bypass Weinstein
-    - Retained holdings: must pass Weinstein, else forced_out
-    - Fill slots: must pass Weinstein
+    SET 1 (12): top FORCED_IN_N=12 overall by mr_rank. WS2 bypassed.
+    SET 2 pool: mr_rank 13-38 by ORIGINAL rank, THEN drop WS2=False. No re-ranking.
+    SET 2 selection (13 slots): HOLDs first (by mr_rank asc), fill with non-holders (by mr_rank asc).
+    WS2 failures (ranks 13-38): holdings -> SELL, non-holders -> excluded.
     """
     if ranked_df.empty:
         return set(), {}
 
     all_scored        = set(ranked_df['symbol'])
-    rank_lookup       = dict(zip(ranked_df['symbol'],
-                                 ranked_df['mr_rank'].astype(int)))
-    wein_lookup       = dict(zip(ranked_df['symbol'],
-                                 ranked_df['weinstein_stage2']))
     unscored_holdings = current_holdings - all_scored
-    scoreable         = current_holdings & all_scored
 
-    # Retained: rank <= buffer AND passes Weinstein
-    retained   = {s for s in scoreable
-                  if rank_lookup[s] <= BUFFER_ZONE and wein_lookup.get(s, False)}
-    forced_out = {s for s in scoreable
-                  if rank_lookup[s] > BUFFER_ZONE or not wein_lookup.get(s, False)}
-    forced_out |= unscored_holdings
+    # SET 1: top 12 overall, WS2 bypassed
+    set1_df      = ranked_df[ranked_df['mr_rank'] <= FORCED_IN_N].sort_values('mr_rank').copy()
+    set1_symbols = set(set1_df['symbol'])
 
-    # Forced-in: top FORCED_IN_N non-holders regardless of Weinstein
-    non_holders_ranked = (
-        ranked_df[~ranked_df['symbol'].isin(scoreable)]
-        .sort_values('mr_rank')
+    # SET 2 pool: clip to original mr_rank 13-38 FIRST, then drop WS2=False
+    set2_pool_raw    = ranked_df[
+        (ranked_df['mr_rank'] > FORCED_IN_N) &
+        (ranked_df['mr_rank'] <= BUFFER_ZONE)
+    ].copy()
+    ws2_fail_symbols = set(set2_pool_raw[set2_pool_raw['weinstein_stage2'] != True]['symbol'])
+    set2_pool        = set2_pool_raw[set2_pool_raw['weinstein_stage2'] == True].copy()
+
+    # SET 2 selection: HOLDs first by mr_rank, fill remaining with non-holders by mr_rank
+    set2_holds      = set2_pool[set2_pool['symbol'].isin(current_holdings)].sort_values('mr_rank')
+    set2_nonholders = set2_pool[~set2_pool['symbol'].isin(current_holdings)].sort_values('mr_rank')
+
+    holds_selected  = set(set2_holds.head(SET2_TARGET)['symbol'])
+    slots_remaining = SET2_TARGET - len(holds_selected)
+    fill_selected   = (
+        set(set2_nonholders.head(slots_remaining)['symbol'])
+        if slots_remaining > 0 else set()
     )
-    forced_in = set(non_holders_ranked.head(FORCED_IN_N)['symbol'])
 
-    combined = retained | forced_in
-    if len(combined) > PORTFOLIO_N:
-        excess = len(combined) - PORTFOLIO_N
-        retained_sorted = sorted(retained,
-                                 key=lambda s: rank_lookup[s], reverse=True)
-        drop       = set(retained_sorted[:excess])
-        forced_out |= drop
-        retained   -= drop
+    set2_selected  = holds_selected | fill_selected
+    watchlist_pool = set(set2_pool['symbol']) - set2_selected
 
-    # Fill: non-holders not in forced_in, must pass Weinstein
-    slots_filled    = retained | forced_in
-    slots_remaining = PORTFOLIO_N - len(slots_filled)
+    top25_symbols = set1_symbols | set2_selected
+    if len(top25_symbols) != PORTFOLIO_N:
+        print(f"  WARNING: portfolio={len(top25_symbols)}, expected {PORTFOLIO_N} "
+              f"(WS2 coverage thin in ranks 13-{BUFFER_ZONE})")
 
-    if slots_remaining > 0:
-        fill_pool = ranked_df[
-            ~ranked_df['symbol'].isin(slots_filled) &
-            ~ranked_df['symbol'].isin(scoreable) &
-            (ranked_df['weinstein_stage2'] == True)
-        ].sort_values('mr_rank')
-        fill_symbols = set(fill_pool.head(slots_remaining)['symbol'])
-    else:
-        fill_symbols = set()
-
-    # If Weinstein filter left us short, fill without Weinstein
-    top25_symbols = retained | forced_in | fill_symbols
-    if len(top25_symbols) < PORTFOLIO_N:
-        still_needed = PORTFOLIO_N - len(top25_symbols)
-        emergency_pool = ranked_df[
-            ~ranked_df['symbol'].isin(top25_symbols) &
-            ~ranked_df['symbol'].isin(scoreable)
-        ].sort_values('mr_rank')
-        emergency = set(emergency_pool.head(still_needed)['symbol'])
-        top25_symbols |= emergency
-
+    # Action map
+    ws2_forced_sells = ws2_fail_symbols & current_holdings
     action_map = {}
     for s in top25_symbols:
         action_map[s] = 'HOLD' if s in current_holdings else 'BUY'
-    for s in forced_out:
+    for s in ws2_forced_sells:
         if s not in top25_symbols:
             action_map[s] = 'SELL'
-    for s in all_scored:
-        if s not in action_map and rank_lookup[s] <= BUFFER_ZONE:
+    for s in unscored_holdings:
+        action_map[s] = 'SELL'
+    for s in watchlist_pool:
+        if s not in action_map:
             action_map[s] = 'WATCHLIST'
 
     return top25_symbols, action_map
-
 
 # ── Monthly pair filter ────────────────────────────────────────────────────────
 def to_monthly_pairs(pairs):
