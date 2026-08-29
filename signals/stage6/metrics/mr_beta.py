@@ -161,6 +161,7 @@ def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
             stock_rows.append({
                 "symbol"        : sym,
                 "beta_12m"      : np.nan,
+                "r2"            : np.nan,
                 "cov"           : np.nan,
                 "bench_var"     : np.nan,
                 "stock_12m_ret" : np.nan,
@@ -176,12 +177,15 @@ def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
 
         if len(aln) < 20:
             beta, cov, bench_var = np.nan, np.nan, np.nan
+            r2   = np.nan
             s12m = np.nan
             alpha = np.nan
         else:
             cov       = aln["stock"].cov(aln["bench"])
             bench_var = aln["bench"].var()
             beta      = cov / bench_var if bench_var > 0 else np.nan
+            corr      = aln["stock"].corr(aln["bench"])
+            r2        = corr ** 2
             s12m      = float((1 + aln["stock"]).prod() - 1)
             # Jensen alpha = stock_ret - Rf - beta * (market_ret - Rf)
             alpha     = s12m - RF_ANNUAL - beta * (market_12m_ret - RF_ANNUAL)
@@ -189,6 +193,7 @@ def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
         stock_rows.append({
             "symbol"        : sym,
             "beta_12m"      : round(beta, 4)  if not np.isnan(beta)  else np.nan,
+            "r2"            : round(r2, 4)    if not np.isnan(r2)    else np.nan,
             "cov"           : round(cov, 8)   if not np.isnan(cov)   else np.nan,
             "bench_var"     : round(bench_var, 8) if not np.isnan(bench_var) else np.nan,
             "stock_12m_ret" : round(s12m, 4)  if not np.isnan(s12m)  else np.nan,
@@ -211,24 +216,28 @@ def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
         p_var      = aln_p["bench"].var()
         port_beta  = round(p_cov / p_var, 4) if p_var > 0 else np.nan
         port_12m   = round(float((1 + aln_p["port"]).prod() - 1), 4)
+        port_r2    = round(aln_p["port"].corr(aln_p["bench"]) ** 2, 4)
     else:
         port_beta = np.nan
         port_12m  = np.nan
+        port_r2   = np.nan
 
     # ── Print summary ──────────────────────────────────────────────────────────
-    print(f"\n  {'Symbol':<15} {'Beta':>7} {'Stock 12m':>10} {'Mkt 12m':>9} {'Alpha':>10} {'n_obs':>6}")
-    print(f"  {'-'*60}")
+    print(f"\n  {'Symbol':<15} {'Beta':>7} {'R2':>6} {'Stock 12m':>10} {'Mkt 12m':>9} {'Alpha':>10} {'n_obs':>6}")
+    print(f"  {'-'*67}")
     for r in stock_rows:
-        b   = f"{r['beta_12m']:.3f}"      if pd.notna(r['beta_12m'])      else "N/A"
+        b   = f"{r['beta_12m']:.3f}" if pd.notna(r['beta_12m'])      else "N/A"
+        r2s = f"{r['r2']:.3f}"       if pd.notna(r['r2'])            else "N/A"
         s12 = f"{r['stock_12m_ret']:.2%}" if pd.notna(r['stock_12m_ret']) else "N/A"
         m12 = f"{r['market_12m_ret']:.2%}"
-        alp = f"{r['alpha_12m']:.2%}"     if pd.notna(r['alpha_12m'])     else "N/A"
-        print(f"  {r['symbol']:<15} {b:>7} {s12:>10} {m12:>9} {alp:>10} {r['n_obs']:>6}")
-    print(f"  {'PORTFOLIO':<15} {port_beta:>7.3f} {port_12m:>10.2%} {market_12m_ret:>9.2%}")
+        alp = f"{r['alpha_12m']:.2%}" if pd.notna(r['alpha_12m'])    else "N/A"
+        print(f"  {r['symbol']:<15} {b:>7} {r2s:>6} {s12:>10} {m12:>9} {alp:>10} {r['n_obs']:>6}")
+    print(f"  {'PORTFOLIO':<15} {port_beta:>7.3f} {port_r2:>6.3f} {port_12m:>10.2%} {market_12m_ret:>9.2%}")
 
     return {
         "stocks"           : stock_rows,
         "portfolio_beta"   : port_beta,
+        "portfolio_r2"     : port_r2,
         "portfolio_12m_ret": port_12m,
         "market_12m_ret"   : round(market_12m_ret, 4),
         "bench_start"      : bench_start,
@@ -250,6 +259,7 @@ def beta_to_df(beta_result: dict, as_of_date: pd.Timestamp) -> pd.DataFrame:
             "symbol"        : r["symbol"],
             "level"         : "stock",
             "beta_12m"      : r["beta_12m"],
+            "r2"            : r["r2"],
             "cov"           : r["cov"],
             "bench_var"     : r["bench_var"],
             "stock_12m_ret" : r["stock_12m_ret"],
@@ -272,6 +282,7 @@ def beta_to_df(beta_result: dict, as_of_date: pd.Timestamp) -> pd.DataFrame:
         "market_12m_ret": beta_result["market_12m_ret"],
         "alpha_12m"     : np.nan,
         "portfolio_beta": beta_result["portfolio_beta"],
+        "portfolio_r2"  : beta_result["portfolio_r2"],
         "port_12m_ret"  : beta_result["portfolio_12m_ret"],
         "bench_start"   : beta_result["bench_start"],
         "bench_end"     : beta_result["bench_end"],
