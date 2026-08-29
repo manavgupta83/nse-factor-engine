@@ -111,6 +111,7 @@ Where:
 | Field | Level | Description |
 |---|---|---|
 | `beta_12m` | Stock | 12-month beta vs Nifty500 |
+| `r2` | Stock | R2 (correlation squared) — how much of stock return variation is explained by Nifty500 |
 | `stock_12m_ret` | Stock | Compounded 12-month return |
 | `alpha_12m` | Stock | Jensen alpha over 12 months |
 | `market_12m_ret` | All rows | Nifty500 12-month return (same value) |
