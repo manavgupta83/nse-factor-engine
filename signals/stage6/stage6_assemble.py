@@ -40,6 +40,7 @@ BASE = "/home/ec2-user/nse-factor-engine/"
 sys.path.insert(0, BASE + "signals/stage6/metrics")
 from mr_score import apply_mr_score, USE_G6_GATE
 from mr_reconstitute import apply_reconstitution, PORTFOLIO_N, BUFFER_ZONE, FORCED_IN_N
+from mr_beta import compute_beta, beta_to_df, beta_for_assembly
 
 PORTFOLIO_STATE_PATH  = Path(BASE + "portfolio/portfolio_state.parquet")
 PORTFOLIO_HISTORY_DIR = Path(BASE + "portfolio/portfolio_history/")
@@ -67,8 +68,7 @@ print(f"STAGE 6 — Portfolio Selection (G6_MR Hybrid | "
 print(f"USE_G6_GATE      : {USE_G6_GATE}  (lower_circuit_hits_63d < 3)")
 print(f"PORTFOLIO_N      : {PORTFOLIO_N}")
 print(f"BUFFER_ZONE      : {BUFFER_ZONE}")
-print(f"FORCED_IN_N      : {FORCED_IN_N}  (top 12 bypass Weinstein)")
-print(f"Weinstein        : applied in reconstitution (retained + fill)")
+print(f"FORCED_IN_N      : {FORCED_IN_N}  (non-holders rank<=12 forced in)")
 print(f"Rebalance guard  : {REBALANCE_DAYS} days")
 print(f"Signals run_date : {run_date_str}")
 print(f"Signals path     : {SIGNALS_PATH}")
@@ -116,6 +116,11 @@ ranked, top25_symbols, weinstein_rejects = apply_reconstitution(
     ranked_df, current_holdings
 )
 
+# ── Step 4b: Compute Beta ──
+beta_result = compute_beta(top25_symbols, as_of_date)
+beta_df     = beta_to_df(beta_result, as_of_date)
+beta_fields = beta_for_assembly(beta_result)
+
 # ── MONITOR MODE — print and exit, nothing written ──
 if MONITOR_MODE:
     print(f"\n{'='*70}")
@@ -134,26 +139,27 @@ if MONITOR_MODE:
 
         # Holdings that would be forced out
         would_force_out = holding_rows[holding_rows['mr_rank'] > BUFFER_ZONE]
-        wein_fail = holding_rows[
-            (holding_rows['mr_rank'] <= BUFFER_ZONE) &
-            (holding_rows['weinstein_stage2'] != True)
-        ]
         if len(would_force_out) > 0:
             print(f"\n  ⚠ Would be forced out (rank > {BUFFER_ZONE}): "
                   f"{sorted(would_force_out['symbol'].tolist())}")
-        if len(wein_fail) > 0:
-            print(f"  ⚠ Would be forced out (Weinstein failed): "
-                  f"{sorted(wein_fail['symbol'].tolist())}")
 
     # What the portfolio would look like if rebalanced today
     print(f"\nIf rebalanced TODAY — projected TOP_25:")
     top25_df = ranked[ranked['tier'] == 'TOP_25'].copy()
     if 'mr_rank' in top25_df.columns:
         top25_df = top25_df.sort_values('mr_rank')
-    cols = [c for c in ['mr_rank', 'symbol', 'action', 'weinstein_stage2',
-                         'norm_momentum_score', 'ret_12m1m']
+
+    # Add beta fields for monitor display
+    top25_df['beta_12m']      = top25_df['symbol'].map(beta_fields['stock_beta'])
+    top25_df['stock_12m_ret'] = top25_df['symbol'].map(beta_fields['stock_return'])
+    top25_df['alpha_12m']     = top25_df['symbol'].map(beta_fields['stock_alpha'])
+
+    cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
+                         'ret_12m1m', 'beta_12m', 'stock_12m_ret', 'alpha_12m']
             if c in top25_df.columns]
     print(top25_df[cols].to_string(index=False))
+    print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
+    print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
 
     # New entrants vs exits vs holds
     projected_top25 = set(top25_df['symbol'])
@@ -210,6 +216,13 @@ if len(cols_to_merge) > 1:
         suffixes=('', '_dup')
     )
     ranked = ranked[[c for c in ranked.columns if not c.endswith('_dup')]]
+
+# ── Step 5b: Add beta fields to ranked ──
+ranked['beta_12m']       = ranked['symbol'].map(beta_fields['stock_beta'])
+ranked['stock_12m_ret']  = ranked['symbol'].map(beta_fields['stock_return'])
+ranked['alpha_12m']      = ranked['symbol'].map(beta_fields['stock_alpha'])
+ranked['market_12m_ret'] = beta_fields['market_return']
+ranked['portfolio_beta'] = beta_fields['portfolio_beta']
 
 # ── Step 6: Run date ──
 run_date          = pd.Timestamp.now(tz='Asia/Kolkata').normalize().tz_localize(None)
@@ -299,5 +312,7 @@ sells = ranked[ranked['action'] == 'SELL']
 if len(sells) > 0:
     print(f"\nSELL ({len(sells)} symbols): {sorted(sells['symbol'].tolist())}")
 
+print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
+print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
 print(f"\nStage 6 complete.")
 print("=" * 70)
