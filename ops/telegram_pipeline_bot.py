@@ -216,20 +216,29 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                         em  = ACTION_EMOJI.get(s['action'], '⚪')
                         # RSI line
                         if s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
-                            rsi_label = "RSI(rebal→now)"
-                            rsi_vals  = f"{s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
-                            if s['rsi_today'] < 50:
+                            rsi_label  = "RSI(rebal→now)"
+                            rsi_vals   = f"{s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
+                            r, t, chg  = s['rsi_rebal'], s['rsi_today'], s['rsi_chg']
+                            exit_flag  = (r < 50 and t < 50 and chg <= 0) or (r >= 50 and t < 50)
+                            if exit_flag:
                                 rsi = f"⚠️ <b>{rsi_label} {rsi_vals}</b>"
                             else:
                                 rsi = f"{rsi_label} {rsi_vals}"
                         else:
-                            rsi = "RSI —"
+                            rsi         = "RSI —"
+                            exit_flag   = False
                         beta  = f"β:{s['beta']:.2f}"   if s.get('beta')  is not None else "β:—"
                         alpha = f"α:{s['alpha']*100:+.0f}%" if s.get('alpha') is not None else "α:—"
                         ret   = f"R:{s['ret12m']*100:+.0f}%"
                         lines.append(f"{em} <b>{s['rank']:2d}. {s['symbol']}</b>  ({s['score']:.2f})")
                         lines.append(f"     {rsi} | {beta} | {alpha} | {ret}")
                         lines.append("")
+
+                    # Footnote — exit signal logic
+                    lines.append("─" * 32)
+                    lines.append("⚠️ <i>Exit signal if:</i>")
+                    lines.append("<i>• Rebal RSI &amp; Today RSI both &lt;50 with RSI declining</i>")
+                    lines.append("<i>• Rebal RSI &gt;50 and Today RSI &lt;50</i>")
 
                     # Split into chunks ≤ 4096 chars
                     msg_text = '\n'.join(lines)
