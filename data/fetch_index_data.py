@@ -70,7 +70,7 @@ if not Path("signals").is_dir():
 DATA_DIR      = Path("data")
 PRICES_PATH   = DATA_DIR / "index_prices.parquet"
 OUTPUT_PATH   = DATA_DIR / "index_prices_{}.parquet".format(RUN_DATE)
-LAST_RUN_PATH = DATA_DIR / "last_run_date.txt"
+LAST_RUN_PATH = DATA_DIR / "last_run_date_index.txt"
 FAILED_PATH   = DATA_DIR / "failed_index_symbols_{}.csv".format(RUN_DATE)
 
 
@@ -263,9 +263,9 @@ print("      {} : {} rows | as_of_date={} | run_date={}".format(
 
 if not failed_symbols:
     LAST_RUN_PATH.write_text(END_DATE.strftime("%Y-%m-%d"))
-    print("\n      last_run_date.txt updated : {}".format(END_DATE))
+    print("\n      last_run_date_index.txt updated : {}".format(END_DATE))
 else:
-    print("\n      last_run_date.txt NOT updated -- {} tickers still failing".format(len(failed_symbols)))
+    print("\n      last_run_date_index.txt NOT updated -- {} tickers still failing".format(len(failed_symbols)))
 
 print("\n" + "=" * 60)
 print("SUMMARY")
