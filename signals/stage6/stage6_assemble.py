@@ -175,11 +175,35 @@ if MONITOR_MODE:
     cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
                          'ret_12m1m'] + rsi_cols + ['beta_12m', 'stock_12m_ret', 'alpha_12m']
             if c in top25_df.columns]
-    print('<<<MONITOR_TABLE_START>>>')
     print(top25_df[cols].to_string(index=False))
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
     print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
-    print('<<<MONITOR_TABLE_END>>>')
+
+    # JSON sentinel for Telegram bot — structured data for card formatting
+    import json as _json
+    _monitor_stocks = []
+    for _, _r in top25_df.iterrows():
+        _monitor_stocks.append({
+            'rank'     : int(_r['mr_rank']),
+            'symbol'   : str(_r['symbol']),
+            'action'   : str(_r['action']),
+            'score'    : round(float(_r['norm_momentum_score']), 2),
+            'ret12m'   : round(float(_r['ret_12m1m']), 4),
+            'rsi_rebal': round(float(_r['rsi_14_rebal']), 1) if 'rsi_14_rebal' in _r and pd.notna(_r['rsi_14_rebal']) else None,
+            'rsi_today': round(float(_r['rsi_14_today']), 1) if 'rsi_14_today' in _r and pd.notna(_r['rsi_14_today']) else None,
+            'rsi_chg'  : round(float(_r['rsi_chg']), 1)     if 'rsi_chg'      in _r and pd.notna(_r['rsi_chg'])      else None,
+            'beta'     : round(float(_r['beta_12m']), 2)     if 'beta_12m'     in _r and pd.notna(_r['beta_12m'])     else None,
+            'alpha'    : round(float(_r['alpha_12m']), 4)    if 'alpha_12m'    in _r and pd.notna(_r['alpha_12m'])    else None,
+        })
+    print('<<<MONITOR_JSON_START>>>')
+    print(_json.dumps({
+        'as_of'       : as_of_date.strftime('%d %b %Y'),
+        'rebal_date'  : str(rebal_date) if port_files else None,
+        'port_beta'   : round(float(beta_fields['portfolio_beta']), 2),
+        'mkt_ret'     : round(float(beta_fields['market_return']), 4),
+        'stocks'      : _monitor_stocks,
+    }))
+    print('<<<MONITOR_JSON_END>>>')
 
     # New entrants vs exits vs holds
     projected_top25 = set(top25_df['symbol'])

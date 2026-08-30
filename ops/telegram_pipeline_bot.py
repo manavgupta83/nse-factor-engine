@@ -9,7 +9,7 @@ Commands:
   /status       — check if pipeline or regime is running
 """
 
-import asyncio, signal, logging, os, re
+import asyncio, signal, logging, os, re, json
 from pathlib import Path
 import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -136,14 +136,14 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                 line = line_bytes.decode('utf-8', errors='replace').rstrip()
 
                 if mode == 'monitor':
-                    if '<<<MONITOR_TABLE_START>>>' in line:
+                    if '<<<MONITOR_JSON_START>>>' in line:
                         in_monitor_top25[0] = True
                         continue
-                    elif '<<<MONITOR_TABLE_END>>>' in line:
+                    elif '<<<MONITOR_JSON_END>>>' in line:
                         in_monitor_top25[0] = False
                         continue
                     elif in_monitor_top25[0]:
-                        monitor_top25_lines.append(line)
+                        monitor_top25_lines.append(line.strip())
 
                 if 'STARTING STAGE 1' in line:
                     await query.message.reply_text('🔄 Stage 1 — Universe fetch started')
@@ -203,26 +203,47 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
 
         if mode == 'monitor':
             if monitor_top25_lines:
-                table_text = '\n'.join(monitor_top25_lines)
-                msg        = f'<pre>{table_text}</pre>'
-                if len(msg) <= 4096:
-                    await query.message.reply_text(msg, parse_mode='HTML')
-                else:
-                    # Split into chunks if table exceeds Telegram 4096 char limit
-                    chunks, current, current_len = [], [], 0
-                    for ln in monitor_top25_lines:
-                        if current_len + len(ln) + 1 > 3900:
-                            chunks.append('\n'.join(current))
-                            current, current_len = [ln], len(ln)
+                try:
+                    data   = json.loads(''.join(monitor_top25_lines))
+                    ACTION_EMOJI = {'HOLD': '🔵', 'BUY': '🟢', 'SELL': '🔴'}
+
+                    lines  = [
+                        f"📊 <b>Monitor · {data['as_of']}</b>",
+                        f"Rebal: {data.get('rebal_date','—')} | Mkt: {data['mkt_ret']*100:+.1f}% | Port β: {data['port_beta']:.2f}",
+                        "",
+                    ]
+                    for s in data['stocks']:
+                        em  = ACTION_EMOJI.get(s['action'], '⚪')
+                        # RSI line
+                        if s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
+                            rsi = f"RSI(rebal→now) {s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
                         else:
-                            current.append(ln)
-                            current_len += len(ln) + 1
-                    if current:
-                        chunks.append('\n'.join(current))
+                            rsi = "RSI —"
+                        beta  = f"β:{s['beta']:.2f}"   if s.get('beta')  is not None else "β:—"
+                        alpha = f"α:{s['alpha']*100:+.0f}%" if s.get('alpha') is not None else "α:—"
+                        ret   = f"R:{s['ret12m']*100:+.0f}%"
+                        lines.append(f"{em} <b>{s['rank']:2d}. {s['symbol']}</b>  ({s['score']:.2f})")
+                        lines.append(f"     {rsi} | {beta} | {alpha} | {ret}")
+                        lines.append("")
+
+                    # Split into chunks ≤ 4096 chars
+                    msg_text = '\n'.join(lines)
+                    chunks   = []
+                    while len(msg_text) > 4000:
+                        split_at = msg_text.rfind('\n\n', 0, 4000)
+                        if split_at == -1:
+                            split_at = 4000
+                        chunks.append(msg_text[:split_at])
+                        msg_text = msg_text[split_at:].lstrip()
+                    chunks.append(msg_text)
                     for chunk in chunks:
-                        await query.message.reply_text(f'<pre>{chunk}</pre>', parse_mode='HTML')
+                        await query.message.reply_text(chunk.strip(), parse_mode='HTML')
+
+                except Exception as _e:
+                    await query.message.reply_text(f'Monitor format error: {_e}')
+                    logging.exception('Monitor format error')
             else:
-                await query.message.reply_text('Monitor mode complete — no rebalance summary captured.')
+                await query.message.reply_text('Monitor mode complete — no summary captured.')
 
         if mode == 'rebalance':
             # Portfolio PDFs — rebalance only
