@@ -154,8 +154,26 @@ if MONITOR_MODE:
     top25_df['stock_12m_ret'] = top25_df['symbol'].map(beta_fields['stock_return'])
     top25_df['alpha_12m']     = top25_df['symbol'].map(beta_fields['stock_alpha'])
 
+    # Load RSI_14 at last rebalance date from latest portfolio parquet
+    port_files = sorted(STAGE6_OUTPUT_DIR.glob("portfolio_recommendations_*.parquet"))
+    if port_files:
+        last_port_df  = pd.read_parquet(port_files[-1])
+        rsi_at_rebal  = (
+            last_port_df[last_port_df['tier'] == 'TOP_25']
+            .set_index('symbol')['rsi_14']
+            .to_dict()
+        )
+        rebal_date    = pd.to_datetime(last_port_df['as_of_date'].iloc[0]).date()
+        top25_df['rsi_14_rebal'] = top25_df['symbol'].map(rsi_at_rebal)
+        top25_df['rsi_14_today'] = top25_df['rsi_14']
+        top25_df['rsi_chg']      = (top25_df['rsi_14_today'] - top25_df['rsi_14_rebal']).round(1)
+        rsi_cols = ['rsi_14_rebal', 'rsi_14_today', 'rsi_chg']
+        print(f"  RSI_14 at rebalance ({rebal_date}) vs today")
+    else:
+        rsi_cols = ['rsi_14']
+
     cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
-                         'ret_12m1m', 'rsi_14', 'beta_12m', 'stock_12m_ret', 'alpha_12m']
+                         'ret_12m1m'] + rsi_cols + ['beta_12m', 'stock_12m_ret', 'alpha_12m']
             if c in top25_df.columns]
     print(top25_df[cols].to_string(index=False))
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
