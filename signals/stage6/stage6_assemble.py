@@ -155,7 +155,7 @@ if MONITOR_MODE:
     top25_df['alpha_12m']     = top25_df['symbol'].map(beta_fields['stock_alpha'])
 
     cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
-                         'ret_12m1m', 'beta_12m', 'stock_12m_ret', 'alpha_12m']
+                         'ret_12m1m', 'rsi_14', 'beta_12m', 'stock_12m_ret', 'alpha_12m']
             if c in top25_df.columns]
     print(top25_df[cols].to_string(index=False))
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
