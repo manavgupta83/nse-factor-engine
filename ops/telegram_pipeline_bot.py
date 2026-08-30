@@ -213,20 +213,25 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                         "",
                     ]
                     for s in data['stocks']:
-                        em  = ACTION_EMOJI.get(s['action'], '⚪')
-                        # RSI line
+                        # RSI-based dot colour + exit flag
+                        # Case 1: rebal<50, today<50, flat/declining → RED  + exit
+                        # Case 2: rebal<50, today<50, rising         → AMBER
+                        # Case 3: rebal<50, today>=50                → BLUE
+                        # Case 4: rebal>=50, today<50                → RED  + exit
+                        # Case 5: rebal>=50, today>=50               → BLUE
                         if s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
-                            rsi_label  = "RSI(rebal→now)"
-                            rsi_vals   = f"{s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
-                            r, t, chg  = s['rsi_rebal'], s['rsi_today'], s['rsi_chg']
-                            exit_flag  = (r < 50 and t < 50 and chg <= 0) or (r >= 50 and t < 50)
-                            if exit_flag:
-                                rsi = f"⚠️ <b>{rsi_label} {rsi_vals}</b>"
-                            else:
-                                rsi = f"{rsi_label} {rsi_vals}"
+                            r, t, chg = s['rsi_rebal'], s['rsi_today'], s.get('rsi_chg') or 0
+                            if   r < 50 and t < 50 and chg <= 0: em, exit_flag = '🔴', True
+                            elif r < 50 and t < 50 and chg >  0: em, exit_flag = '🟠', False
+                            elif r < 50 and t >= 50:              em, exit_flag = '🔵', False
+                            elif r >= 50 and t <  50:             em, exit_flag = '🔴', True
+                            else:                                 em, exit_flag = '🔵', False
+                            rsi_label = "RSI(rebal→now)"
+                            rsi_vals  = f"{r:.0f}→{t:.0f} ({chg:+.0f})"
+                            rsi = f"⚠️ <b>{rsi_label} {rsi_vals}</b>" if exit_flag else f"{rsi_label} {rsi_vals}"
                         else:
-                            rsi         = "RSI —"
-                            exit_flag   = False
+                            em, exit_flag = ACTION_EMOJI.get(s['action'], '⚪'), False
+                            rsi = "RSI —"
                         beta  = f"β:{s['beta']:.2f}"   if s.get('beta')  is not None else "β:—"
                         alpha = f"α:{s['alpha']*100:+.0f}%" if s.get('alpha') is not None else "α:—"
                         ret   = f"R:{s['ret12m']*100:+.0f}%"
