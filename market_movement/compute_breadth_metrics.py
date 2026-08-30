@@ -48,7 +48,6 @@ UNIVERSE_DIR = Path("universe")
 DATA_DIR     = Path("market_movement/data")
 ROLLING_OUT  = DATA_DIR / "breadth_metrics.parquet"
 DATED_OUT    = DATA_DIR / f"breadth_metrics_{RUN_DATE_STR}.parquet"
-LAST_RUN_PATH = DATA_DIR / "last_run_date_breadth.txt"
 
 SMA_SHORT    = 50
 SMA_LONG     = 200
@@ -66,16 +65,6 @@ TRIN_BEARISH =  1.50
 TRIN_BULLISH =  0.60
 ADR_BULL_ZONE = 1.50
 ADR_BEAR_ZONE = 0.67
-
-# -- Idempotency guard --------------------------------------------------------
-if LAST_RUN_PATH.exists():
-    last = LAST_RUN_PATH.read_text().strip()
-    if last == RUN_DATE.strftime("%Y-%m-%d"):
-        print(f"Already ran today ({last}). Nothing to do. Exiting.")
-        sys.exit(0)
-    print(f"Last run: {last} -- proceeding")
-else:
-    print("No last run date found -- first run")
 
 print("=" * 60)
 print("Market Breadth -- Metrics Computation")
@@ -322,7 +311,6 @@ daily = daily[col_order]
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 daily.to_parquet(ROLLING_OUT, index=False)
 daily.to_parquet(DATED_OUT,   index=False)
-LAST_RUN_PATH.write_text(RUN_DATE.strftime("%Y-%m-%d"))
 
 # -- Summary ------------------------------------------------------------------
 latest = daily.iloc[-1]
