@@ -216,7 +216,12 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                         em  = ACTION_EMOJI.get(s['action'], '⚪')
                         # RSI line
                         if s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
-                            rsi = f"RSI(rebal→now) {s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
+                            rsi_label = "RSI(rebal→now)"
+                            rsi_vals  = f"{s['rsi_rebal']:.0f}→{s['rsi_today']:.0f} ({s['rsi_chg']:+.0f})"
+                            if s['rsi_today'] < 50:
+                                rsi = f"⚠️ <b>{rsi_label} {rsi_vals}</b>"
+                            else:
+                                rsi = f"{rsi_label} {rsi_vals}"
                         else:
                             rsi = "RSI —"
                         beta  = f"β:{s['beta']:.2f}"   if s.get('beta')  is not None else "β:—"
