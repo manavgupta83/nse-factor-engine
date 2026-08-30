@@ -175,9 +175,11 @@ if MONITOR_MODE:
     cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
                          'ret_12m1m'] + rsi_cols + ['beta_12m', 'stock_12m_ret', 'alpha_12m']
             if c in top25_df.columns]
+    print('<<<MONITOR_TABLE_START>>>')
     print(top25_df[cols].to_string(index=False))
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
     print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
+    print('<<<MONITOR_TABLE_END>>>')
 
     # New entrants vs exits vs holds
     projected_top25 = set(top25_df['symbol'])

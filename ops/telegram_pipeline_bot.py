@@ -128,14 +128,22 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
             env=env,
         )
 
-        monitor_summary = []
+        monitor_top25_lines = []
+        in_monitor_top25    = [False]  # list so nested fn can mutate
 
         async def read_stdout():
             async for line_bytes in process.stdout:
                 line = line_bytes.decode('utf-8', errors='replace').rstrip()
 
-                if mode == 'monitor' and any(x in line for x in ('Would BUY', 'Would HOLD', 'Would SELL')):
-                    monitor_summary.append(line.strip())
+                if mode == 'monitor':
+                    if '<<<MONITOR_TABLE_START>>>' in line:
+                        in_monitor_top25[0] = True
+                        continue
+                    elif '<<<MONITOR_TABLE_END>>>' in line:
+                        in_monitor_top25[0] = False
+                        continue
+                    elif in_monitor_top25[0]:
+                        monitor_top25_lines.append(line)
 
                 if 'STARTING STAGE 1' in line:
                     await query.message.reply_text('🔄 Stage 1 — Universe fetch started')
@@ -194,9 +202,25 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.reply_text('Pipeline complete. Generating reports...')
 
         if mode == 'monitor':
-            if monitor_summary:
-                summary_text = 'If rebalanced TODAY\n' + '\n'.join(monitor_summary)
-                await query.message.reply_text(summary_text)
+            if monitor_top25_lines:
+                table_text = '\n'.join(monitor_top25_lines)
+                msg        = f'<pre>{table_text}</pre>'
+                if len(msg) <= 4096:
+                    await query.message.reply_text(msg, parse_mode='HTML')
+                else:
+                    # Split into chunks if table exceeds Telegram 4096 char limit
+                    chunks, current, current_len = [], [], 0
+                    for ln in monitor_top25_lines:
+                        if current_len + len(ln) + 1 > 3900:
+                            chunks.append('\n'.join(current))
+                            current, current_len = [ln], len(ln)
+                        else:
+                            current.append(ln)
+                            current_len += len(ln) + 1
+                    if current:
+                        chunks.append('\n'.join(current))
+                    for chunk in chunks:
+                        await query.message.reply_text(f'<pre>{chunk}</pre>', parse_mode='HTML')
             else:
                 await query.message.reply_text('Monitor mode complete — no rebalance summary captured.')
 
