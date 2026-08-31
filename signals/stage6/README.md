@@ -175,3 +175,41 @@ STAGE6_MODE=monitor python3 run_pipeline.py
 | `metrics/mr_beta.py` | 12-month beta and alpha calculator |
 | `metrics/g6_gate.py` | Circuit breaker pre-filter |
 | `metrics/README.md` | Detailed methodology for scoring, reconstitution and beta |
+
+---
+
+## Factor Weight Optimisation — Backtest Results
+
+Tested on MR_M (monthly rebalance, Buffer Zone 38, no Weinstein gate) with the
+Day15 RSI<50 exit overlay applied. Backtest period: January 2016 → June 2026
+(126 monthly periods, 10.5 years). All net figures are after transaction costs
+(0.04% per side, position-sized at 1/25th portfolio).
+
+### Variant: 50/50 (12m : 6m momentum) — prior configuration
+
+| Metric | Baseline (gross) | + Day15 RSI<50 (net) | Delta |
+|---|---|---|---|
+| CAGR | 32.63% | 35.21% | +2.58% |
+| Sharpe | 1.156 | 1.384 | +0.228 |
+| Max DD | -37.81% | -23.79% | +14.02% |
+| Worst month | -33.85% | -19.34% | +14.51% |
+| Mean tail (worst 10%) | -13.30% | -9.97% | +3.33% |
+
+### Variant: 60/40 (12m : 6m momentum) — adopted configuration
+
+| Metric | Baseline (gross) | + Day15 RSI<50 (net) | Delta |
+|---|---|---|---|
+| CAGR | 34.12% | 37.83% | +3.71% |
+| Sharpe | 1.197 | 1.484 | +0.287 |
+| Max DD | -35.08% | -19.82% | +15.26% |
+| Worst month | -30.65% | -18.14% | +12.51% |
+| Mean tail (worst 10%) | -12.71% | -9.55% | +3.16% |
+
+### Key finding
+
+The 60/40 weighting selects stocks with stronger persistent momentum (12m signal
+dominant). These portfolios respond more decisively to the Day15 RSI exit signal —
+the overlay adds +3.71% CAGR and cuts Max DD by 15.26 percentage points, vs +2.58%
+and 14.02pp for the 50/50 configuration. The two improvements are synergistic: the
+12m-heavy portfolio composition makes the RSI overlay more effective, not just
+additive. **60/40 (12m:6m) is adopted as the production weight configuration.**
