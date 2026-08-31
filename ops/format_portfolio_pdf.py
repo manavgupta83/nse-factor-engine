@@ -32,7 +32,7 @@ BASE        = Path('/home/ec2-user/nse-factor-engine')
 SIGNALS_DIR = BASE / 'signals' / 'stage6'
 OUT_DIR     = BASE / 'signals' / 'stage6'
 COLS        = ['symbol', 'as_of_date', 'rsi_14', 'market_cap_cr',
-               'adtv_63_cr', 'g6_pool_size', 'tier', 'action', 'run_date']
+               'adtv_63_cr', 'tier', 'action', 'run_date']
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 WHITE      = colors.white
@@ -96,7 +96,6 @@ def stock_row(row):
     rsi  = fmt(row['rsi_14'],        decimals=1)
     mcap = fmt(row['market_cap_cr'], suffix='cr')
     adtv = fmt(row['adtv_63_cr'],    suffix='cr')
-    pool = fmt(row['g6_pool_size'])
     tier = str(row['tier']).replace('_', ' ')
 
     left = Table([
@@ -121,8 +120,7 @@ def stock_row(row):
         metric("RSI",     rsi),
         metric("MCap",    mcap),
         metric("ADTV",    adtv),
-        metric("G6_Pool", pool),
-    ]], colWidths=[16*mm, 26*mm, 20*mm, 22*mm])
+    ]], colWidths=[20*mm, 32*mm, 26*mm])
     right.setStyle(TableStyle([
         ("TOPPADDING",    (0,0),(-1,-1), 0),
         ("BOTTOMPADDING", (0,0),(-1,-1), 0),
