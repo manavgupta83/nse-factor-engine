@@ -213,3 +213,55 @@ the overlay adds +3.71% CAGR and cuts Max DD by 15.26 percentage points, vs +2.5
 and 14.02pp for the 50/50 configuration. The two improvements are synergistic: the
 12m-heavy portfolio composition makes the RSI overlay more effective, not just
 additive. **60/40 (12m:6m) is adopted as the production weight configuration.**
+
+---
+
+## Regime-Conditional Breakdown — Factor Weight Variants
+
+All metrics below are net of costs + Day15 RSI<50 overlay. Regime labels sourced
+from the HMM forward algorithm (causal, no lookahead) — regime assigned at signal
+date (end-of-month Friday when portfolio is constructed). Backtest window: Jan 2016
+→ Jun 2026 (126 months). `*` = best value in row across all variants.
+
+### Bull Regime (88 months)
+
+| Metric | V0 (50/50) | V1 (20/80) | V2 (40/60) | V3 (60/40) | V4 (80/20) |
+|---|---|---|---|---|---|
+| Mean ret/mo | 3.00% | 2.86% | 2.97% | 3.07% | 3.12%* |
+| Sharpe | 1.802 | 1.780 | 1.760 | 1.830* | 1.811 |
+| Hit rate | 71.6% | 71.6% | 69.3% | 70.5% | 72.7%* |
+| Worst month | -13.42% | -13.85% | -13.38% | -12.98% | -12.67%* |
+| Mean tail | -6.11% | -6.05% | -5.93% | -5.94% | -5.92%* |
+
+### Choppy Regime (33 months)
+
+| Metric | V0 (50/50) | V1 (20/80) | V2 (40/60) | V3 (60/40) | V4 (80/20) |
+|---|---|---|---|---|---|
+| Mean ret/mo | 2.55% | 2.41% | 2.49% | 2.76%* | 2.61% |
+| Sharpe | 1.051 | 1.017 | 1.036 | 1.160* | 1.055 |
+| Hit rate | 66.7% | 69.7%* | 66.7% | 66.7% | 66.7% |
+| Worst month | -13.19% | -12.97% | -13.14% | -11.68%* | -13.70% |
+| Mean tail | -11.50% | -11.24% | -11.40% | -10.55%* | -11.70% |
+
+### Crisis Regime (4 months — low sample, treat as indicative only)
+
+| Metric | V0 (50/50) | V1 (20/80) | V2 (40/60) | V3 (60/40) | V4 (80/20) |
+|---|---|---|---|---|---|
+| Mean ret/mo | 1.15% | 2.32%* | 1.26% | 1.54% | 1.27% |
+| Sharpe | 0.254 | 0.508* | 0.281 | 0.344 | 0.310 |
+| Hit rate | 50.0% | 75.0%* | 50.0% | 50.0% | 50.0% |
+| Worst month | -18.98% | -17.93% | -18.66% | -18.14% | -17.33%* |
+| Mean tail | -18.98% | -17.93% | -18.66% | -18.14% | -17.33%* |
+
+### V3 vs V0 delta by regime
+
+| Regime | V0 mean | V3 mean | Δ mean | V0 Sharpe | V3 Sharpe | ΔSharpe |
+|---|---|---|---|---|---|---|
+| Bull | 3.00% | 3.07% | +0.07% | 1.802 | 1.830 | +0.028 |
+| Choppy | 2.55% | 2.76% | +0.21% | 1.051 | 1.160 | +0.109 |
+| Crisis | 1.15% | 1.54% | +0.38% | 0.254 | 0.344 | +0.090 |
+
+V3 (60/40) wins on mean return and Sharpe in both Bull and Choppy regimes. The
+advantage is larger in Choppy (+0.21% mean, +0.109 Sharpe) than in Bull (+0.07%,
++0.028) — consistent with the 12m signal being more robust when market direction
+is unclear. Crisis sample (4 months) is too thin to be conclusive.
