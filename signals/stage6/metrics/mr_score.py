@@ -5,7 +5,7 @@ Formula:
   MR12 = ret_12m1m / vol_252
   MR6  = ret_6m1m  / vol_252
   Z12, Z6 cross-sectional Z-scores
-  Weighted_Z = 0.5 * Z12 + 0.5 * Z6
+  Weighted_Z = 0.6 * Z12 + 0.4 * Z6
   Normalized_Momentum_Score:
       1 + Weighted_Z           if Weighted_Z >= 0
       1 / (1 - Weighted_Z)     if Weighted_Z <  0
@@ -24,6 +24,11 @@ import pandas as pd
 from g6_gate import apply_g6_gate
 
 USE_G6_GATE = 1
+
+# Factor weights — optimised via backtest (Jan 2016 -> Jun 2026, 126 months)
+# 60/40 (12m:6m) beats 50/50 on CAGR (+1.83%), Sharpe (+0.100), MaxDD (+1.70pp)
+W_12M = 0.60
+W_6M  = 0.40
 
 
 def apply_mr_score(signals_df: pd.DataFrame) -> tuple:
@@ -81,7 +86,7 @@ def apply_mr_score(signals_df: pd.DataFrame) -> tuple:
     df['z_6']  = (df['mr_6']  - df['mr_6'].mean())  / df['mr_6'].std(ddof=1)
 
     # Step 6: Weighted Z
-    df['weighted_z'] = 0.5 * df['z_12'] + 0.5 * df['z_6']
+    df["weighted_z"] = W_12M * df["z_12"] + W_6M * df["z_6"]
 
     # Step 7: Normalized score
     df['norm_momentum_score'] = df['weighted_z'].apply(
