@@ -32,7 +32,7 @@ BASE        = Path('/home/ec2-user/nse-factor-engine')
 SIGNALS_DIR = BASE / 'signals' / 'stage6'
 OUT_DIR     = BASE / 'signals' / 'stage6'
 COLS        = ['symbol', 'as_of_date', 'rsi_14', 'market_cap_cr',
-               'adtv_63_cr', 'tier', 'action', 'run_date']
+               'adtv_63_cr', 'mr_rank', 'tier', 'action', 'run_date']
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 WHITE      = colors.white
@@ -96,6 +96,7 @@ def stock_row(row):
     rsi  = fmt(row['rsi_14'],        decimals=1)
     mcap = fmt(row['market_cap_cr'], suffix='cr')
     adtv = fmt(row['adtv_63_cr'],    suffix='cr')
+    rank = fmt(row['mr_rank'])
     tier = str(row['tier']).replace('_', ' ')
 
     left = Table([
@@ -117,10 +118,11 @@ def stock_row(row):
         )
 
     right = Table([[
+        metric("Rank",    rank),
         metric("RSI",     rsi),
         metric("MCap",    mcap),
         metric("ADTV",    adtv),
-    ]], colWidths=[20*mm, 32*mm, 26*mm])
+    ]], colWidths=[14*mm, 16*mm, 26*mm, 22*mm])
     right.setStyle(TableStyle([
         ("TOPPADDING",    (0,0),(-1,-1), 0),
         ("BOTTOMPADDING", (0,0),(-1,-1), 0),
@@ -203,7 +205,7 @@ def main():
         ('HOLD', '🔵 HOLD', HOLD_COL, HOLD_BG),
         ('SELL', '🔴 SELL', SELL_COL, SELL_BG),
     ]:
-        subset = df[df['action'] == action]
+        subset = df[df['action'] == action].sort_values('mr_rank')
         if subset.empty:
             continue
         story += [
@@ -219,7 +221,7 @@ def main():
 
     # ── PDF 2: Watchlist ───────────────────────────────────────────────────────
     watchlist_path = OUT_DIR / f'portfolio_watchlist_{run_date_str}.pdf'
-    wl = df[df['action'] == 'WATCHLIST']
+    wl = df[df['action'] == 'WATCHLIST'].sort_values('mr_rank').head(13)
     story2 = [
         Paragraph("NSE Watchlist", S_TITLE),
         Paragraph(f"Run: {run_date}  ·  As of: {as_of}", S_SUB),
