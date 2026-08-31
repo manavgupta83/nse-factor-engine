@@ -297,6 +297,9 @@ print(f"Output rows: {len(ranked)}")
 
 # ── Step 8: Write recommendations ──
 output_path = STAGE6_OUTPUT_DIR / f"portfolio_recommendations_{run_date_ddmmyyyy}.parquet"
+action_order = {'BUY': 0, 'HOLD': 1, 'WATCHLIST': 2, 'SELL': 3}
+ranked['_sort_key'] = ranked['action'].map(action_order).fillna(99)
+ranked = ranked.sort_values(['_sort_key', 'mr_rank']).drop(columns=['_sort_key'])
 ranked.to_parquet(output_path, index=False)
 print(f"\nRecommendations written : {output_path}")
 print(f"Shape                   : {ranked.shape}")
