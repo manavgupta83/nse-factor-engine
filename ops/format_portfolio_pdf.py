@@ -32,7 +32,8 @@ BASE        = Path('/home/ec2-user/nse-factor-engine')
 SIGNALS_DIR = BASE / 'signals' / 'stage6'
 OUT_DIR     = BASE / 'signals' / 'stage6'
 COLS        = ['symbol', 'as_of_date', 'rsi_14', 'market_cap_cr',
-               'adtv_63_cr', 'mr_rank', 'tier', 'action', 'run_date']
+               'adtv_63_cr', 'mr_rank', 'beta_12m', 'alpha_12m',
+               'portfolio_beta', 'tier', 'action', 'run_date']
 
 # ── Colors ─────────────────────────────────────────────────────────────────────
 WHITE      = colors.white
@@ -94,15 +95,26 @@ def section_header(label, col, bg):
 
 def stock_row(row):
     rsi  = fmt(row['rsi_14'],        decimals=1)
-    mcap = fmt(row['market_cap_cr'], suffix='cr')
+    mcap_val = row['market_cap_cr']
+    if pd.notna(mcap_val):
+        if mcap_val >= 100000:
+            mcap = f"{mcap_val/100000:.1f}L"
+        elif mcap_val >= 1000:
+            mcap = f"{mcap_val/1000:.0f}K"
+        else:
+            mcap = f"{int(mcap_val)}cr"
+    else:
+        mcap = '—'
     adtv = fmt(row['adtv_63_cr'],    suffix='cr')
-    rank = fmt(row['mr_rank'])
+    rank  = fmt(row['mr_rank'])
+    beta  = fmt(row['beta_12m'],  decimals=2)
+    alpha = fmt(row['alpha_12m'], decimals=2)
     tier = str(row['tier']).replace('_', ' ')
 
     left = Table([
         [Paragraph(row['symbol'], S_SYM)],
         [Paragraph(tier, S_TIER)],
-    ], colWidths=[86*mm])
+    ], colWidths=[72*mm])
     left.setStyle(TableStyle([
         ("TOPPADDING",    (0,0),(-1,-1), 0),
         ("BOTTOMPADDING", (0,0),(-1,-1), 0),
@@ -119,10 +131,12 @@ def stock_row(row):
 
     right = Table([[
         metric("Rank",    rank),
+        metric("Beta",    beta),
+        metric("Alpha",   alpha),
         metric("RSI",     rsi),
         metric("MCap",    mcap),
         metric("ADTV",    adtv),
-    ]], colWidths=[14*mm, 16*mm, 26*mm, 22*mm])
+    ]], colWidths=[12*mm, 13*mm, 15*mm, 13*mm, 18*mm, 18*mm])
     right.setStyle(TableStyle([
         ("TOPPADDING",    (0,0),(-1,-1), 0),
         ("BOTTOMPADDING", (0,0),(-1,-1), 0),
@@ -132,7 +146,7 @@ def stock_row(row):
         ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
     ]))
 
-    inner = Table([[left, right]], colWidths=[86*mm, 88*mm])
+    inner = Table([[left, right]], colWidths=[72*mm, 102*mm])
     inner.setStyle(TableStyle([
         ("VALIGN",        (0,0),(-1,-1), "MIDDLE"),
         ("TOPPADDING",    (0,0),(-1,-1), 0),
@@ -197,6 +211,7 @@ def main():
     story = [
         Paragraph("NSE Portfolio Actions", S_TITLE),
         Paragraph(f"Run: {run_date}  ·  As of: {as_of}", S_SUB),
+        Paragraph(f"Portfolio Beta (12m): {df['portfolio_beta'].dropna().iloc[0]:.3f}", S_SUB),
         SP(3), HR(), SP(2),
     ]
 
