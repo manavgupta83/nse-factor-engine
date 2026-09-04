@@ -2,11 +2,11 @@
 
 ## Overview
 
-Systematic backtest of put option hedging strategies on a **₹1 Crore Nifty 50 portfolio**
+Systematic backtest of put option hedging strategies on a **Rs 1 Crore Nifty 50 portfolio**
 over 25 years (2000–2026). Objective: find a hedging strategy that provides meaningful
 downside protection during crashes without significantly dragging long-term returns.
 
-**Spoiler: It exists. And it beats unhedged by 32%.**
+**Conclusion: No systematic put-buying strategy robustly beats unhedged over the long run.**
 
 ---
 
@@ -20,7 +20,7 @@ downside protection during crashes without significantly dragging long-term retu
 
 | Parameter | Value |
 |---|---|
-| Portfolio | ₹1,00,00,000 (₹1 Crore) |
+| Portfolio | Rs 1,00,00,000 (Rs 1 Crore) |
 | Index | Nifty 50 |
 | Period | Dec 2000 – Aug 2026 |
 | Lot size | 65 units |
@@ -48,56 +48,136 @@ Calibrated against live market on Sep 2026 (Nifty ~24,400):
 
 ---
 
-## Winner: Momentum 20/30% OTM
+## Strategies Tested
 
-### The Rule
+### 1. OTM Sweep (5% to 30%)
+Tested all OTM levels on annual roll. Found 20-30% OTM is the sweet spot —
+cheap enough to not drag returns, deep enough to catch real crashes.
 
-At each year-end roll date:
-IF Nifty > 200-day MA → buy 20% OTM annual put
-IF Nifty < 200-day MA → buy 30% OTM annual put
+### 2. Sigma-Gated Hedge
+Skip buying put when VIX is high. FAILED — skips protection exactly when
+market is most nervous. 2007 had sigma=0.36, gate fired, no put bought,
+then 2008 crashed 57% with zero protection.
 
+### 3. Variable OTM Based on Sigma
+Buy closer OTM when sigma low, deeper OTM when sigma high. Decent but
+beaten by the momentum rule consistently.
 
-### Results
+### 4. Momentum Gated Hedge
+Buy 20% OTM when Nifty above 200MA (bull), 30% OTM when below (bear).
+Appeared to be the winner on December roll dates. See stability test below.
 
-| Metric | Value |
+### 5. Partial Hedge
+Hedge 25-75% of portfolio. Full hedge always dominates — premium is already
+cheap enough that reducing coverage just reduces protection without saving much cost.
+
+### 6. Put Ladder
+Buy two strikes simultaneously (e.g. 15% + 30% OTM). Complexity adds cost
+not value. Single well-chosen strike always wins.
+
+### 7. Drawdown-Triggered Hedge
+Buy put only after Nifty falls 5-10% from 52-week peak. FAILED — biggest
+crashes start from all-time highs. 2007: Nifty at peak, zero drawdown,
+no put bought, then -57%.
+
+### 8. Cash Buffer + Tail Hedge
+Keep 10-15% in liquid funds, deploy after crash. FAILED — liquid fund earns
+6.5%/yr vs Nifty 14.5% CAGR. 8% annual opportunity cost compounded over
+25 years is devastating. Put at 1%/yr is far more efficient than cash at 8% drag.
+
+---
+
+## The Critical Stability Test
+
+After finding that the December Momentum 20/30% strategy beat unhedged by 32%,
+we tested all 12 calendar months as roll start dates. Results:
+
+| Month | Momentum Hedged | Unhedged | Outperforms? |
+|---|---|---|---|
+| Jan | Rs 34.0 Cr | Rs 26.5 Cr | YES |
+| Feb | Rs 22.8 Cr | Rs 23.6 Cr | NO |
+| Mar | Rs 21.7 Cr | Rs 24.0 Cr | NO |
+| Apr | Rs 15.3 Cr | Rs 16.3 Cr | NO |
+| May | Rs 14.3 Cr | Rs 22.9 Cr | NO |
+| Jun | Rs 13.8 Cr | Rs 23.6 Cr | NO |
+| Jul | Rs 13.8 Cr | Rs 21.1 Cr | NO |
+| Aug | Rs 17.0 Cr | Rs 25.0 Cr | NO |
+| Sep | Rs 16.4 Cr | Rs 21.6 Cr | NO |
+| Oct | Rs 20.9 Cr | Rs 24.7 Cr | NO |
+| Nov | Rs 26.9 Cr | Rs 27.5 Cr | NO |
+| Dec | Rs 29.3 Cr | Rs 25.6 Cr | YES |
+
+**Momentum beats Fixed 20%: 12/12 months — genuine finding.**
+**Momentum beats Unhedged: only 2/12 months — timing dependent.**
+
+### Why December and January Worked
+
+The GFC crash ran from Jan 2008 to Mar 2009. The December annual window
+(Dec 2007 → Dec 2008) captured the full -57% move in one window — a perfect
+alignment. June roll split the crash across two windows and caught neither payout.
+
+This means the December outperformance was **partially timing luck**, not a
+robust edge. If you had started this strategy in any month from February to
+November, you would have underperformed unhedged over 25 years.
+
+---
+
+## Genuine Findings (Robust Across All Tests)
+
+| Finding | Evidence |
 |---|---|
-| Final hedged portfolio | Rs 34.3 Cr |
-| Final unhedged portfolio | Rs 25.9 Cr |
-| Outperformance | +Rs 8.4 Cr (+32%) |
-| Total premium paid (25 yrs) | Rs 1.86 Cr |
-| Total payout received (after tax) | Rs 1.79 Cr |
-| Net hedge cost | ~Rs 0 (self-financing) |
-| Average annual premium drag | 1.03% |
-| Puts that paid out | 2 times (2007 and 2010) |
+| Momentum rule beats Fixed 20% OTM | 12/12 roll months |
+| Deep OTM beats ATM puts | Consistent across all tests |
+| Annual beats quarterly rolling | Quarterly splits crash cycles |
+| Simple beats complex | Ladder, collar, cash buffer all lost |
+| Timing gates (sigma, drawdown) backfire | Both failed at worst moment |
 
 ---
 
-## Why It Works
+## The Structural Truth
 
-1. Deep OTM puts cost only 0.5-1.5% per year vs Nifty CAGR of 14.5%
-2. Momentum rule cuts premium by 60% in bear markets (30% OTM) when less protection needed
-3. Crash payouts reinvested at market bottoms compound through recovery
-4. Annual puts catch full crash cycles — real crashes take 12-18 months to bottom
-5. Self-financing — two crash payouts covered 25 years of premiums
+Nifty long-run CAGR = 14.5% per year
+Put premium cost = 1.0-1.5% per year
+Expected payout per year = 0.3-0.5% per year (crash once per 10-12 yrs)
+Net expected drag = ~0.6-1.0% per year, forever
 
----
 
-## What Does Not Work
+Options are priced so that sellers make money systematically over time.
+If put buying consistently beat unhedged, the market would reprice until it didn't.
 
-| Strategy | Final Value | Why It Failed |
-|---|---|---|
-| ATM Put Annual | Rs 13.4 Cr | Costs 4-6%/yr — too expensive |
-| Sigma-Gated Hedge | Rs 19.2 Cr | Skips protection when VIX high — exactly wrong |
-| Drawdown-Triggered | Rs 21.6 Cr | Biggest crashes start from all-time highs |
-| Cash Buffer 15% | Rs 28.7 Cr | 8% opportunity cost vs Nifty kills returns |
-| Put Ladder | Rs 33.5 Cr | Complexity adds cost not value |
-| Collar | Rs 5.4 Cr | Selling call caps all bull market upside |
-| Partial Hedge 50% | Rs 30.3 Cr | Full hedge always better at these premium levels |
-| Bear=CASH | Rs 11.5 Cr | Misses 2009 +88%, 2012 +32% recoveries |
+Unhedged Rs 1 Cr over 25 years at 14.5% CAGR = Rs 25.9 Cr
+Hedged Rs 1 Cr over 25 years at 13.5% CAGR = Rs 21.6 Cr
+Drag cost in wealth terms = Rs 4.3 Cr lost
+Actual hedge payout over 25 years = Rs 1.8 Cr received
+Net loss from hedging = Rs 2.5 Cr
+
 
 ---
 
-## All Strategies Compared
+## When Hedging DOES Make Sense
+
+| Situation | Why Hedge Makes Sense |
+|---|---|
+| Short-term known risk | Election, earnings, macro event in next 3-6 months |
+| Near liquidity event | Retiring in 1-2 years, cannot afford 50% drawdown |
+| Institutional mandate | Drawdown limits required by fund mandate |
+| Early retirement | Sequence of returns risk — year-1 crash is catastrophic |
+
+**For a long-term wealth compounder — hedging systematically destroys value.**
+
+---
+
+## What Actually Works for Long-Term Nifty Investors
+
+1. **Asset allocation** — don't put 100% in equity if you cannot stomach -50%
+2. **Stay invested** — not panic selling in 2008/2020 is worth more than any put
+3. **SIP averaging** — regular buying through crashes naturally lowers cost basis
+4. **Time horizon discipline** — only invest money you will not need for 7+ years
+5. **Position sizing** — size equity exposure to your actual risk tolerance
+
+---
+
+## All Strategies Compared (December Roll, Apple to Apple)
 
 | Rank | Strategy | Final Value | vs Unhedged | Avg Cost/yr |
 |---|---|---|---|---|
@@ -107,42 +187,12 @@ IF Nifty < 200-day MA → buy 30% OTM annual put
 | 4 | Fixed 25% OTM Annual | Rs 31.8 Cr | +Rs 5.9 Cr | 0.91% |
 | 5 | Fixed 20% OTM Annual | Rs 30.9 Cr | +Rs 5.1 Cr | 1.50% |
 | — | Unhedged | Rs 25.9 Cr | baseline | 0% |
-| ❌ | ATM Put Annual | Rs 13.4 Cr | -Rs 12.5 Cr | 5.75% |
-| ❌ | Bear=CASH | Rs 11.5 Cr | -Rs 14.4 Cr | — |
-| ❌ | Collar | Rs 5.4 Cr | -Rs 20.5 Cr | — |
+| x | ATM Put Annual | Rs 13.4 Cr | -Rs 12.5 Cr | 5.75% |
+| x | Bear=CASH | Rs 11.5 Cr | -Rs 14.4 Cr | — |
+| x | Collar | Rs 5.4 Cr | -Rs 20.5 Cr | — |
 
----
-
-## Key Crash Behaviour
-
-| Crash | Nifty Fall | Regime | Put Strike | Payout |
-|---|---|---|---|---|
-| GFC 2007-2008 | -57% | BULL (at peak) | 20% OTM | Rs 1.41 Cr |
-| Eurozone 2010-2011 | -27% | BULL | 20% OTM | Rs 38.9 L |
-| COVID 2020 | -38% intra-year | BULL | 20% OTM | Rs 0 (recovered by Dec) |
-
----
-
-## Practical Implementation
-
-At each December year-end:
-
-Check: Nifty close vs 200-day MA
-BULL (above MA) → buy 20% OTM December put
-BEAR (below MA) → buy 30% OTM December put
-Strike:
-BULL: round(Nifty * 0.80, -2)
-BEAR: round(Nifty * 0.70, -2)
-Lots: round(portfolio_value / (Nifty * 65))
-Roll: buy on last trading day of December
-close position on last trading day of next December
-
-### Real Market Considerations
-- Liquidity: 20-30% OTM annual puts are thinly traded — use limit orders
-- Bid-ask: adds 1-3% to premium, already in 1.4x skew multiplier
-- Lot size: currently 65 (was 75 before 2024, 50 before that)
-- Tax: put payouts as short-term capital gains (33% assumed)
-- Options are European — only expiry payout matters, no early exercise
+Note: December roll results above are partially explained by GFC timing alignment.
+Across all 12 roll months, no strategy beats unhedged consistently.
 
 ---
 
@@ -161,17 +211,23 @@ hedging/
 
 ---
 
-## Conclusion
+## Final Conclusion
 
-A simple momentum-based annual put buying strategy on Nifty 50 — costing only ~1% per
-year on average — outperformed a pure unhedged Nifty portfolio by 32% over 25 years,
-while providing meaningful protection during GFC 2008 and Eurozone 2011.
+After testing 8 distinct hedging strategies with 25 years of real Nifty data,
+across 12 different roll month variants, the conclusion is clear:
 
-The net cost of hedging over 25 years was essentially zero — crash payouts covered the premiums.
+**Systematic put buying does not robustly outperform an unhedged Nifty portfolio
+for a long-term investor.**
 
-**The best hedge is cheap, always on, and lets equity do the heavy lifting.**
+The one robust finding is that the **momentum rule (200MA regime switch) consistently
+improves any hedging strategy relative to a fixed OTM approach.** If you must hedge,
+use the momentum rule. But the better answer for a long-term compounder is to size
+your equity exposure correctly and stay invested through cycles.
+
+The best hedge is a long time horizon.
 
 ---
 
 *Backtest: September 2026 | Data: NSE Nifty 50 (1999-2026), India VIX (2008-2026)*
 *Model: Black-Scholes, India VIX sigma, 1.17x vol scalar, 1.4x skew, 33% tax*
+*Stability test: 12 roll month variants x 2 strategies = 24 backtests*
