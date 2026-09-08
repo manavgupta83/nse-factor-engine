@@ -18,7 +18,6 @@ CHECK_DAY   = 15
 RSI_THRESH  = 50
 RESULTS_DIR = "backtest/results"
 ACTIVITY_FILE  = "backtest/results/MR_M_V3_activity_31082026.csv"
-RETURNS_FILE   = "backtest/results/MR_M_V3_weekly_returns_31082026.csv"
 PRICES_PATH    = "backtest/data/prices_backtest.parquet"
 
 # ── Load prices ───────────────────────────────────────────────────────────────
