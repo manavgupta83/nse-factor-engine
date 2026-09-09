@@ -106,15 +106,18 @@ def _compute_single_beta(ret_stock: pd.Series,
     return beta, cov, bench_var
 
 
-def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
+def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp,
+                 portfolio_symbols: set = None) -> dict:
     """
     Compute 12-month beta, returns, covariance and Jensen alpha
     for each stock in top25 and for the equal-weighted portfolio.
 
     Parameters
     ----------
-    top25_symbols : set of symbol strings
-    as_of_date    : rebalance date (signal Friday)
+    top25_symbols     : set of symbol strings — per-stock beta computed for all
+    as_of_date        : rebalance date (signal Friday)
+    portfolio_symbols : optional subset for portfolio-level beta (default = top25_symbols)
+                        Pass top25_symbols explicitly in monitor mode to exclude SELLs.
 
     Returns
     -------
@@ -206,7 +209,9 @@ def compute_beta(top25_symbols: set, as_of_date: pd.Timestamp) -> dict:
         print(f"  WARNING: no price data for {missing}")
 
     # ── Portfolio-level beta and return ────────────────────────────────────────
-    available  = [s for s in symbols if s in stock_ret.columns]
+    # Use portfolio_symbols subset if provided (monitor mode excludes SELLs)
+    port_universe = list(portfolio_symbols) if portfolio_symbols is not None else symbols
+    available  = [s for s in port_universe if s in stock_ret.columns]
     port_ret   = stock_ret[available].mean(axis=1)
     aln_p      = pd.concat([port_ret, n500_ret], axis=1).dropna()
     aln_p.columns = ["port", "bench"]

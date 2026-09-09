@@ -209,17 +209,33 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
 
                     lines  = [
                         f"📊 <b>Monitor · {data['as_of']}</b>",
-                        f"Rebal: {data.get('rebal_date','—')} | Mkt: {data['mkt_ret']*100:+.1f}% | Port β: {data['port_beta']:.2f}",
+                        f"Rebal: {data.get('rebal_date','—')} | Nifty500 returns past 12m: {data['mkt_ret']*100:+.1f}% | Port β: {data['port_beta']:.2f}",
                         "",
                     ]
+                    sell_divider_inserted = False
                     for s in data['stocks']:
+                        # Insert divider before first SELL row
+                        if s['action'] == 'SELL' and not sell_divider_inserted:
+                            lines.append("─" * 32)
+                            lines.append("🔴 <b>EXITING POSITIONS</b>")
+                            lines.append("")
+                            sell_divider_inserted = True
                         # RSI-based dot colour + exit flag
                         # Case 1: rebal<50, today<50, flat/declining → RED  + exit
                         # Case 2: rebal<50, today<50, rising         → AMBER
                         # Case 3: rebal<50, today>=50                → BLUE
                         # Case 4: rebal>=50, today<50                → RED  + exit
                         # Case 5: rebal>=50, today>=50               → BLUE
-                        if s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
+                        if s['action'] == 'SELL':
+                            # SELLs always red — skip RSI emoji logic
+                            em, exit_flag = '🔴', False
+                            r, t, chg = s.get('rsi_rebal'), s.get('rsi_today'), s.get('rsi_chg') or 0
+                            if r is not None and t is not None:
+                                rsi_vals = f"{r:.0f}→{t:.0f} ({chg:+.0f})"
+                                rsi = f"RSI(rebal→now) {rsi_vals}"
+                            else:
+                                rsi = "RSI —"
+                        elif s.get('rsi_rebal') is not None and s.get('rsi_today') is not None:
                             r, t, chg = s['rsi_rebal'], s['rsi_today'], s.get('rsi_chg') or 0
                             if   r < 50 and t < 50 and chg <= 0: em, exit_flag = '🔴', True
                             elif r < 50 and t < 50 and chg >  0: em, exit_flag = '🟠', False
@@ -235,7 +251,8 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                         beta  = f"β:{s['beta']:.2f}"   if s.get('beta')  is not None else "β:—"
                         alpha = f"α:{s['alpha']*100:+.0f}%" if s.get('alpha') is not None else "α:—"
                         ret   = f"R:{s['ret12m']*100:+.0f}%"
-                        lines.append(f"{em} <b>{s['rank']:2d}. {s['symbol']}</b>  ({s['score']:.2f})")
+                        sell_tag = " <b>[SELL]</b>" if s['action'] == 'SELL' else ""
+                        lines.append(f"{em} <b>{s['rank']:2d}. {s['symbol']}</b>{sell_tag}  ({s['score']:.2f})")
                         lines.append(f"     {rsi} | {beta} | {alpha} | {ret}")
                         lines.append("")
 
@@ -257,6 +274,23 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                     chunks.append(msg_text)
                     for chunk in chunks:
                         await query.message.reply_text(chunk.strip(), parse_mode='HTML')
+
+                    # ── BUY/SELL momentum change summary — separate message ──
+                    would_buy  = sorted([s['symbol'] for s in data['stocks'] if s['action'] == 'BUY'])
+                    would_sell = sorted([s['symbol'] for s in data['stocks'] if s['action'] == 'SELL'])
+                    buysell_lines = [
+                        "📋 <b>BUY/SELL based on momentum score change</b>",
+                        "",
+                    ]
+                    if would_buy:
+                        buysell_lines.append(f"🟢 <b>Would BUY  ({len(would_buy)})</b>: {', '.join(would_buy)}")
+                    else:
+                        buysell_lines.append("🟢 <b>Would BUY  (0)</b>: —")
+                    if would_sell:
+                        buysell_lines.append(f"🔴 <b>Would SELL ({len(would_sell)})</b>: {', '.join(would_sell)}")
+                    else:
+                        buysell_lines.append("🔴 <b>Would SELL (0)</b>: —")
+                    await query.message.reply_text('\n'.join(buysell_lines), parse_mode='HTML')
 
                 except Exception as _e:
                     await query.message.reply_text(f'Monitor format error: {_e}')

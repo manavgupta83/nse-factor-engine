@@ -117,7 +117,15 @@ ranked, top25_symbols, weinstein_rejects = apply_reconstitution(
 )
 
 # ── Step 4b: Compute Beta ──
-beta_result = compute_beta(top25_symbols, as_of_date)
+# In monitor mode: compute per-stock beta for TOP_25 + SELLs (for display),
+# but portfolio_beta is calculated only over TOP_25 (excluding SELLs)
+if MONITOR_MODE:
+    sell_symbols = current_holdings - set(top25_symbols)
+    beta_symbols = set(top25_symbols) | sell_symbols
+    beta_result  = compute_beta(beta_symbols, as_of_date,
+                                portfolio_symbols=set(top25_symbols))
+else:
+    beta_result  = compute_beta(set(top25_symbols), as_of_date)
 beta_df     = beta_to_df(beta_result, as_of_date)
 beta_fields = beta_for_assembly(beta_result)
 
@@ -144,15 +152,18 @@ if MONITOR_MODE:
                   f"{sorted(would_force_out['symbol'].tolist())}")
 
     # What the portfolio would look like if rebalanced today
-    print(f"\nIf rebalanced TODAY — projected TOP_25:")
+    print(f"\nIf rebalanced TODAY :")
     top25_df = ranked[ranked['tier'] == 'TOP_25'].copy()
-    if 'mr_rank' in top25_df.columns:
-        top25_df = top25_df.sort_values('mr_rank')
+    # Also include SELL rows (current holdings falling out of TOP_25)
+    sell_df  = ranked[ranked['action'] == 'SELL'].copy()
+    display_df = pd.concat([top25_df, sell_df], ignore_index=True)
+    if 'mr_rank' in display_df.columns:
+        display_df = display_df.sort_values('mr_rank')
 
-    # Add beta fields for monitor display
-    top25_df['beta_12m']      = top25_df['symbol'].map(beta_fields['stock_beta'])
-    top25_df['stock_12m_ret'] = top25_df['symbol'].map(beta_fields['stock_return'])
-    top25_df['alpha_12m']     = top25_df['symbol'].map(beta_fields['stock_alpha'])
+    # Add beta fields for monitor display (TOP_25 only; SELLs will be NaN — fine)
+    display_df['beta_12m']      = display_df['symbol'].map(beta_fields['stock_beta'])
+    display_df['stock_12m_ret'] = display_df['symbol'].map(beta_fields['stock_return'])
+    display_df['alpha_12m']     = display_df['symbol'].map(beta_fields['stock_alpha'])
 
     # Load RSI_14 at last rebalance date from latest portfolio parquet
     port_files = sorted(STAGE6_OUTPUT_DIR.glob("portfolio_recommendations_*.parquet"))
@@ -164,31 +175,55 @@ if MONITOR_MODE:
             .to_dict()
         )
         rebal_date    = pd.to_datetime(last_port_df['as_of_date'].iloc[0]).date()
-        top25_df['rsi_14_rebal'] = top25_df['symbol'].map(rsi_at_rebal)
-        top25_df['rsi_14_today'] = top25_df['rsi_14']
-        top25_df['rsi_chg']      = (top25_df['rsi_14_today'] - top25_df['rsi_14_rebal']).round(1)
+        display_df['rsi_14_rebal'] = display_df['symbol'].map(rsi_at_rebal)
+
+        # BUY stocks were not in last portfolio — compute RSI-14 as of rebal_date
+        # from prices.parquet (same source mr_beta uses), using Wilder EMA method
+        buy_mask    = display_df['action'] == 'BUY'
+        buy_symbols = display_df.loc[buy_mask, 'symbol'].tolist()
+        if buy_symbols:
+            _prices_path = "/home/ec2-user/nse-factor-engine/data/prices.parquet"
+            _px          = pd.read_parquet(_prices_path)
+            _rebal_ts    = pd.Timestamp(rebal_date)
+            for _sym in buy_symbols:
+                _s = _px[_px['symbol'] == _sym].sort_values('date')
+                _s = _s[_s['date'] <= _rebal_ts].tail(30)
+                if len(_s) < 15:
+                    continue
+                _delta = _s['close'].diff()
+                _gain  = _delta.clip(lower=0)
+                _loss  = (-_delta).clip(lower=0)
+                _avg_g = _gain.ewm(com=13, min_periods=14).mean()
+                _avg_l = _loss.ewm(com=13, min_periods=14).mean()
+                _rs    = _avg_g / _avg_l.replace(0, float('nan'))
+                _rsi   = 100 - (100 / (1 + _rs))
+                display_df.loc[display_df['symbol'] == _sym, 'rsi_14_rebal'] = round(_rsi.iloc[-1], 4)
+
+        display_df['rsi_14_today'] = display_df['rsi_14']
+        display_df['rsi_chg']      = (display_df['rsi_14_today'] - display_df['rsi_14_rebal']).round(1)
         rsi_cols = ['rsi_14_rebal', 'rsi_14_today', 'rsi_chg']
-        print(f"  RSI_14 at rebalance ({rebal_date}) vs today")
+        print(f"  RSI_14 at rebalance ({rebal_date}) vs today  [BUY: computed from prices.parquet]")
     else:
         rsi_cols = ['rsi_14']
 
     cols = [c for c in ['mr_rank', 'symbol', 'action', 'norm_momentum_score',
                          'ret_12m1m'] + rsi_cols + ['beta_12m', 'stock_12m_ret', 'alpha_12m']
-            if c in top25_df.columns]
-    print(top25_df[cols].to_string(index=False))
+            if c in display_df.columns]
+    print(display_df[cols].to_string(index=False))
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
     print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
 
     # JSON sentinel for Telegram bot — structured data for card formatting
+    # Must iterate display_df (not top25_df) — that's where RSI/beta were added
     import json as _json
     _monitor_stocks = []
-    for _, _r in top25_df.iterrows():
+    for _, _r in display_df.iterrows():
         _monitor_stocks.append({
-            'rank'     : int(_r['mr_rank']),
+            'rank'     : int(_r['mr_rank']) if pd.notna(_r.get('mr_rank')) else 999,
             'symbol'   : str(_r['symbol']),
             'action'   : str(_r['action']),
-            'score'    : round(float(_r['norm_momentum_score']), 2),
-            'ret12m'   : round(float(_r['ret_12m1m']), 4),
+            'score'    : round(float(_r['norm_momentum_score']), 2) if pd.notna(_r.get('norm_momentum_score')) else None,
+            'ret12m'   : round(float(_r['ret_12m1m']), 4)           if pd.notna(_r.get('ret_12m1m'))          else None,
             'rsi_rebal': round(float(_r['rsi_14_rebal']), 1) if 'rsi_14_rebal' in _r and pd.notna(_r['rsi_14_rebal']) else None,
             'rsi_today': round(float(_r['rsi_14_today']), 1) if 'rsi_14_today' in _r and pd.notna(_r['rsi_14_today']) else None,
             'rsi_chg'  : round(float(_r['rsi_chg']), 1)     if 'rsi_chg'      in _r and pd.notna(_r['rsi_chg'])      else None,
