@@ -165,11 +165,11 @@ else:
     print("      No existing prices -- full 15M fetch for all qualifying symbols")
 
 # ── Monitor mode: load cached metadata ────────────
-if STAGE6_MODE == "monitor":
+if STAGE6_MODE in ("monitor", "mid_month"):
     if METADATA_PATH.exists():
         cached_meta_df  = pd.read_parquet(METADATA_PATH)
         cached_meta_map = cached_meta_df.set_index("symbol").to_dict("index")
-        print("      Monitor mode  : {} cached metadata records loaded".format(len(cached_meta_map)))
+        print("      Monitor/mid_month mode: {} cached metadata records loaded".format(len(cached_meta_map)))
     else:
         print("      Monitor mode requested but no existing metadata found -- falling back to rebalance")
         STAGE6_MODE     = "rebalance"
