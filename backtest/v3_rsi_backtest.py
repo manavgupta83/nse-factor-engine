@@ -38,7 +38,8 @@ BUFFER_ZONE     = 38
 INITIAL_CAPITAL = 10_000_000.0
 COST            = 0.0004
 W_12M, W_6M     = 0.60, 0.40
-RSI_THRESH      = 50
+RSI_THRESH      = 40
+RSI_MIN_DROP    = 10          # minimum RSI point drop to trigger exit
 VARIANT_LABEL   = 'MR_M_V3_RSI'
 
 BASE        = 'backtest'
@@ -147,8 +148,9 @@ def reconstitute(ranked_df, current_holdings, rsi_map=None):
             prior_rsi, rebal_rsi = rsi_map.get(s, (np.nan, np.nan))
             if pd.isna(prior_rsi) or pd.isna(rebal_rsi):
                 continue
-            cond_a = (prior_rsi < RSI_THRESH) and (rebal_rsi < prior_rsi)
-            cond_b = (prior_rsi > RSI_THRESH) and (rebal_rsi < RSI_THRESH)
+            drop   = prior_rsi - rebal_rsi
+            cond_a = (prior_rsi < RSI_THRESH) and (rebal_rsi < prior_rsi) and (drop >= RSI_MIN_DROP)
+            cond_b = (prior_rsi > RSI_THRESH) and (rebal_rsi < RSI_THRESH) and (drop >= RSI_MIN_DROP)
             if cond_a or cond_b:
                 portfolio.discard(s)
                 forced_out.add(s)
