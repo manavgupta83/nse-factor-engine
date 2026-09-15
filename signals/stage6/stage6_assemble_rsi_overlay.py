@@ -272,7 +272,7 @@ if MID_MONTH_MODE:
         print("\nNo RSI exits triggered. Portfolio unchanged.")
         stocks_json = [
             _make_entry(sym, 'HOLD', rsi_results.get(sym))
-            for sym in sorted(current_holdings)
+            for sym in sorted(current_holdings, key=lambda s: _enrich.get(s, {}).get('rank', 999))
         ]
         print('<<<MONITOR_JSON_START>>>')
         print(json.dumps({
