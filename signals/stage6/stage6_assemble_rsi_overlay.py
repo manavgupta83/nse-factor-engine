@@ -64,7 +64,8 @@ PORTFOLIO_STATE_PATH  = Path(BASE + "portfolio/portfolio_state.parquet")
 PORTFOLIO_HISTORY_DIR = Path(BASE + "portfolio/portfolio_history/")
 STAGE6_OUTPUT_DIR     = Path(BASE + "signals/stage6/")
 PRICES_PATH           = BASE + "data/prices.parquet"
-REBALANCE_DAYS        = 30
+REBALANCE_DAYS         = 30   # calendar days (legacy reference)
+REBALANCE_TRADING_DAYS = 21   # trading days guard for rebalance (~4 weeks)
 
 # ── Mid-month config ──────────────────────────────────────────────────────────
 CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
@@ -186,6 +187,23 @@ if MID_MONTH_MODE:
               f"currently at day {n_days}.")
         print(f"Next eligible: approximately {CHECK_DAY - n_days} trading day(s) away.")
         sys.exit(0)
+
+    # ── Guard 2: block if mid_month already ran in this cycle recently ────────
+    mid_entries = portfolio_state[portfolio_state['entry_type'] == 'MID']         if 'entry_type' in portfolio_state.columns else pd.DataFrame()
+
+    if not mid_entries.empty:
+        latest_mid_date = pd.Timestamp(mid_entries['entry_date'].max())
+        td_since_mid    = len(trading_days_since(latest_mid_date))
+        print(f"Last MID entry: {latest_mid_date.date()} "
+              f"({td_since_mid} trading days ago)")
+        if td_since_mid < CHECK_DAY:
+            print(f"\nMid-month already executed {td_since_mid} trading day(s) ago "
+                  f"(on {latest_mid_date.date()}). "
+                  f"Next eligible in {CHECK_DAY - td_since_mid} trading day(s).")
+            print("Skipping — no files written, no state changed.")
+            sys.exit(0)
+    else:
+        print("No prior MID entry in current cycle.")
 
     print(f"Day {n_days} of holding period — mid-month RSI check running.")
 
@@ -413,18 +431,20 @@ if MID_MONTH_MODE:
 # REBALANCE + MONITOR — shared scoring step
 # ══════════════════════════════════════════════════════════════════════════════
 
-# 30-day guard (REBALANCE only)
+# Trading-day rebalance guard (REBALANCE only)
 if REBALANCE_MODE and stored_last_rebalance_date is not None:
-    days_since = (pd.Timestamp.now().normalize() - stored_last_rebalance_date).days
-    print(f"Days since last rebalance: {days_since}")
-    if days_since < REBALANCE_DAYS:
-        print(f"\n30-day guard: only {days_since} days since last rebalance. "
-              f"Need {REBALANCE_DAYS - days_since} more days.")
+    td_rebal  = trading_days_since(stored_last_rebalance_date)
+    td_count  = len(td_rebal)
+    print(f"Trading days since last rebalance: {td_count}")
+    if td_count < REBALANCE_TRADING_DAYS:
+        print(f"\nRebalance guard: only {td_count} trading days since last rebalance "
+              f"({stored_last_rebalance_date.date()}). "
+              f"Need {REBALANCE_TRADING_DAYS - td_count} more trading day(s).")
         print("Skipping — no files written, no state changed.")
         print("Tip: run with STAGE6_MODE=monitor to see current rankings.")
         sys.exit(0)
     else:
-        print(f"{days_since} days since last rebalance — proceeding.")
+        print(f"{td_count} trading days since last rebalance — proceeding.")
 
 # ── Score + reconstitute ──────────────────────────────────────────────────────
 ranked_df, gate_rejects            = apply_mr_score(signals)
