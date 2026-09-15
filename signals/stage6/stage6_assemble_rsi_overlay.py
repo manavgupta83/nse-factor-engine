@@ -14,7 +14,7 @@ Modes:
 
 Mid-month logic:
   1. Count trading days since last_rebalance_date
-     → If < CHECK_DAY (15): print status and exit (not yet due)
+     → If < CHECK_DAY (10): print status and exit (not yet due)
   2. For each held stock, compute Wilder EMA RSI-14 using today's prices
      → If RSI < RSI_EXIT_THRESH (50): MID_SELL
   3. Load WATCHLIST from latest portfolio_recommendations_*.parquet
@@ -34,7 +34,7 @@ Fallback: if old portfolio_state.parquet (without entry_date/entry_type) is read
 Configurable:
   RSI_EXIT_THRESH  = 50
   RSI_ENTRY_THRESH = 50
-  CHECK_DAY        = 15
+  CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
 
 Usage:
   python3 stage6_assemble_rsi_overlay.py                       # rebalance
@@ -67,7 +67,7 @@ PRICES_PATH           = BASE + "data/prices.parquet"
 REBALANCE_DAYS        = 30
 
 # ── Mid-month config ──────────────────────────────────────────────────────────
-CHECK_DAY        = 15
+CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
 RSI_EXIT_THRESH  = 50
 RSI_ENTRY_THRESH = 50
 

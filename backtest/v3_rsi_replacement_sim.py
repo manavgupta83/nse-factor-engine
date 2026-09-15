@@ -24,7 +24,7 @@ Mid-month (MID):
 Configurable:
   RSI_EXIT_THRESH  = 50
   RSI_ENTRY_THRESH = 50
-  CHECK_DAY        = 15
+  CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
 
 Benchmarks:
   V3 Monthly gross             : CAGR 34.12% | Sharpe 1.197 | MaxDD -35.08%
@@ -50,7 +50,7 @@ FORCED_IN_N      = 12
 BUFFER_ZONE      = 38
 INITIAL_CAPITAL  = 10_000_000.0
 W_12M, W_6M      = 0.60, 0.40
-CHECK_DAY        = 15
+CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
 RSI_EXIT_THRESH  = 50    # exit held stock if day-15 RSI < this
 RSI_ENTRY_THRESH = 50    # replacement must have day-15 RSI > this
 VARIANT_LABEL    = 'MR_M_V3_RSI_SIM'
