@@ -127,8 +127,8 @@ def main():
         print("=" * 70)
         print("  1. REBALANCE  — full pipeline (stages 1-6), rebalances if >= 30 days")
         print("  2. MONITOR    — full pipeline (stages 1-6), Stage 6 read-only")
-        print("  3. MID_MONTH  — Stage 6 only: day-15 RSI exit + replacement")
-        print("                  (skips stages 1-5; uses existing prices + watchlist)")
+        print("  3. MID_MONTH  — full pipeline + day-15 RSI exit + replacement")
+        print("                  (same as monitor but updates portfolio_state)")
         print("=" * 70)
         while True:
             choice = input("\nEnter mode [1=REBALANCE / 2=MONITOR / 3=MID_MONTH]: ").strip().lower()
@@ -147,54 +147,50 @@ def main():
             else:
                 print("  Invalid — enter 1, 2, or 3 (or r/m/mm)")
 
-    if os.environ.get("STAGE6_MODE") == "mid_month":
-        log("\nMID_MONTH mode: skipping stages 1-5. Using existing prices.parquet and watchlist.")
-        log("Tip: ensure prices.parquet is current (updated by last weekly pipeline run).")
-    else:
-        run_stage(
-            "STAGE 1 — Universe & Liquidity",
-            BASE / "universe" / "run_universe.py",
-            extra_env={"TZ": "Asia/Kolkata"},
-        )
+    run_stage(
+        "STAGE 1 — Universe & Liquidity",
+        BASE / "universe" / "run_universe.py",
+        extra_env={"TZ": "Asia/Kolkata"},
+    )
 
-        n_failed, failed_path = check_stage1_failures()
-        if n_failed > 0:
-            log(f"\nStage 1 finished with {n_failed} symbol(s) still failing.")
-            log(f"Failed symbols file: {failed_path}")
-            if n_failed >= FAILED_SYMBOL_HALT_THRESHOLD:
-                log(
-                    f"\n!!! HALTING: {n_failed} failures >= threshold "
-                    f"({FAILED_SYMBOL_HALT_THRESHOLD}). Pipeline will NOT "
-                    f"proceed on a meaningfully incomplete universe. !!!"
-                )
-                sys.exit(1)
-            else:
-                log(
-                    f"\n{n_failed} failures < threshold "
-                    f"({FAILED_SYMBOL_HALT_THRESHOLD}) — proceeding, but this is a WARNING."
-                )
+    n_failed, failed_path = check_stage1_failures()
+    if n_failed > 0:
+        log(f"\nStage 1 finished with {n_failed} symbol(s) still failing.")
+        log(f"Failed symbols file: {failed_path}")
+        if n_failed >= FAILED_SYMBOL_HALT_THRESHOLD:
+            log(
+                f"\n!!! HALTING: {n_failed} failures >= threshold "
+                f"({FAILED_SYMBOL_HALT_THRESHOLD}). Pipeline will NOT "
+                f"proceed on a meaningfully incomplete universe. !!!"
+            )
+            sys.exit(1)
         else:
-            log("\nStage 1: 0 failed symbols. Clean universe run.")
+            log(
+                f"\n{n_failed} failures < threshold "
+                f"({FAILED_SYMBOL_HALT_THRESHOLD}) — proceeding, but this is a WARNING."
+            )
+    else:
+        log("\nStage 1: 0 failed symbols. Clean universe run.")
 
-        run_stage(
-            "STAGE 2 — Momentum Core Signals",
-            BASE / "signals" / "stage2" / "stage2_step5_assemble.py",
-        )
+    run_stage(
+        "STAGE 2 — Momentum Core Signals",
+        BASE / "signals" / "stage2" / "stage2_step5_assemble.py",
+    )
 
-        run_stage(
-            "STAGE 3 — Momentum Quality Signals",
-            BASE / "signals" / "stage3" / "stage3_assemble.py",
-        )
+    run_stage(
+        "STAGE 3 — Momentum Quality Signals",
+        BASE / "signals" / "stage3" / "stage3_assemble.py",
+    )
 
-        run_stage(
-            "STAGE 4 — Entry Quality Filters",
-            BASE / "signals" / "stage4" / "stage4_assemble.py",
-        )
+    run_stage(
+        "STAGE 4 — Entry Quality Filters",
+        BASE / "signals" / "stage4" / "stage4_assemble.py",
+    )
 
-        run_stage(
-            "STAGE 5 — Ranking & Selection",
-            BASE / "signals" / "stage5" / "stage5_assemble.py",
-        )
+    run_stage(
+        "STAGE 5 — Ranking & Selection",
+        BASE / "signals" / "stage5" / "stage5_assemble.py",
+    )
 
     run_stage(
         "STAGE 6 — Portfolio Selection (RSI Overlay)",
