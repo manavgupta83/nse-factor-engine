@@ -79,7 +79,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         'NSE Pipeline Bot\n\n'
         'Commands:\n'
-        '  /run_pipeline — run full pipeline (choose Rebalance or Monitor)\n'
+        '  /run_pipeline — run full pipeline (Rebalance / Monitor / Mid-Month)\n'
         '  /run_regime   — run weekly regime & liquidity risk engine\n'
         '  /status       — check if a run is in progress'
     )
@@ -92,8 +92,9 @@ async def run_pipeline_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = [
         [
-            InlineKeyboardButton('🔄 Rebalance', callback_data='pipeline_rebalance'),
-            InlineKeyboardButton('👁 Monitor',   callback_data='pipeline_monitor'),
+            InlineKeyboardButton('🔄 Rebalance',  callback_data='pipeline_rebalance'),
+            InlineKeyboardButton('👁 Monitor',    callback_data='pipeline_monitor'),
+            InlineKeyboardButton('🔀 Mid-Month',  callback_data='pipeline_mid_month'),
         ]
     ]
     await update.message.reply_text(
@@ -111,7 +112,12 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
     if query.from_user.id != ALLOWED_USER_ID:
         return
 
-    mode = 'rebalance' if query.data == 'pipeline_rebalance' else 'monitor'
+    if query.data == 'pipeline_rebalance':
+        mode = 'rebalance'
+    elif query.data == 'pipeline_monitor':
+        mode = 'monitor'
+    else:
+        mode = 'mid_month'
     await query.edit_message_text(f'Mode: {mode.upper()} — starting pipeline...')
     logging.info(f'Pipeline triggered in {mode} mode by user {query.from_user.id}')
 
@@ -135,7 +141,7 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
             async for line_bytes in process.stdout:
                 line = line_bytes.decode('utf-8', errors='replace').rstrip()
 
-                if mode == 'monitor':
+                if mode in ('monitor', 'mid_month'):
                     if '<<<MONITOR_JSON_START>>>' in line:
                         in_monitor_top25[0] = True
                         continue
@@ -145,7 +151,7 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                     elif in_monitor_top25[0]:
                         monitor_top25_lines.append(line.strip())
 
-                if 'STARTING STAGE 1' in line:
+                if 'STARTING STAGE 1' in line and mode != 'mid_month':
                     await query.message.reply_text('🔄 Stage 1 — Universe fetch started')
                 elif 'STARTING STAGE 2' in line:
                     await query.message.reply_text('🔄 Stage 2 — Momentum signals')
@@ -298,6 +304,78 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 await query.message.reply_text('Monitor mode complete — no summary captured.')
 
+        if mode == 'mid_month':
+            if monitor_top25_lines:
+                try:
+                    data = json.loads(''.join(monitor_top25_lines))
+                    lines = [
+                        f"🔀 <b>Mid-Month RSI Overlay · {data['run_date']}</b>",
+                        f"Rebal: {data['rebal_date']} | Day {data['trading_day']} of holding period",
+                        f"RSI exit &lt; {data['rsi_exit_thresh']} | RSI entry &gt; {data['rsi_entry_thresh']}",
+                        "",
+                        f"📊 {len([s for s in data['stocks'] if s['action']=='HOLD'])} HOLD  "                        f"🔴 {data['n_exits']} EXIT  "                        f"🟢 {data['n_replaced']} BUY  "                        f"💰 {data['n_cash']} → Cash",
+                        "",
+                    ]
+
+                    # HOLD
+                    holds = [s for s in data['stocks'] if s['action'] == 'HOLD']
+                    if holds:
+                        lines.append("🔵 <b>HOLD</b>")
+                        for s in sorted(holds, key=lambda x: x['symbol']):
+                            rsi = f"{s['rsi']:.1f}" if s.get('rsi') else '—'
+                            lines.append(f"  {s['symbol']}  RSI: {rsi}")
+                        lines.append("")
+
+                    # MID_SELL
+                    sells = [s for s in data['stocks'] if s['action'] == 'MID_SELL']
+                    if sells:
+                        lines.append("🔴 <b>MID_SELL</b>")
+                        for s in sorted(sells, key=lambda x: x.get('rsi', 99)):
+                            rsi = f"{s['rsi']:.1f}" if s.get('rsi') else '—'
+                            lines.append(f"  {s['symbol']}  RSI: {rsi}")
+                        lines.append("")
+
+                    # MID_BUY
+                    buys = [s for s in data['stocks'] if s['action'] == 'MID_BUY']
+                    if buys:
+                        lines.append("🟢 <b>MID_BUY</b>")
+                        for s in sorted(buys, key=lambda x: x.get('mr_rank', 99)):
+                            rsi = f"{s['rsi']:.1f}" if s.get('rsi') else '—'
+                            lines.append(
+                                f"  {s['symbol']}  rank={s.get('mr_rank','—')}  RSI: {rsi}"                                f"  ↩ {s.get('replaces','—')}"
+                            )
+                        lines.append("")
+
+                    # Cash slots
+                    if data['n_cash'] > 0:
+                        cash_syms = [
+                            s['symbol'] for s in data['stocks']
+                            if s['action'] == 'MID_SELL'
+                            and s['symbol'] not in [b.get('replaces') for b in buys]
+                        ]
+                        lines.append(f"💰 <b>Cash ({data['n_cash']} slots)</b>")
+                        if cash_syms:
+                            lines.append(f"  {', '.join(cash_syms)}")
+                        lines.append("")
+
+                    msg_text = '\n'.join(lines)
+                    chunks = []
+                    while len(msg_text) > 4000:
+                        split_at = msg_text.rfind('\n\n', 0, 4000)
+                        if split_at == -1:
+                            split_at = 4000
+                        chunks.append(msg_text[:split_at])
+                        msg_text = msg_text[split_at:].lstrip()
+                    chunks.append(msg_text)
+                    for chunk in chunks:
+                        await query.message.reply_text(chunk.strip(), parse_mode='HTML')
+
+                except Exception as _e:
+                    await query.message.reply_text(f'Mid-month format error: {_e}')
+                    logging.exception('Mid-month format error')
+            else:
+                await query.message.reply_text('Mid-month mode complete — no summary captured.')
+
         if mode == 'rebalance':
             # Portfolio PDFs — rebalance only
             parquet_ready = await wait_for_parquet(query)
@@ -325,12 +403,13 @@ async def pipeline_mode_callback(update: Update, context: ContextTypes.DEFAULT_T
                     f'Portfolio PDF failed:\n<pre>{err}</pre>', parse_mode='HTML'
                 )
 
-        # Market movement PDF — both modes
-        run_date_str = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%d%m%Y')
-        await send_pdf(
-            query, MKT_PDF_DIR / f'market_movement_report_{run_date_str}.pdf',
-            'Market movement'
-        )
+        # Market movement PDF — rebalance and monitor only
+        if mode in ('rebalance', 'monitor'):
+            run_date_str = pd.Timestamp.now(tz='Asia/Kolkata').strftime('%d%m%Y')
+            await send_pdf(
+                query, MKT_PDF_DIR / f'market_movement_report_{run_date_str}.pdf',
+                'Market movement'
+            )
 
     except Exception as e:
         await query.message.reply_text(f'Error: {e}')

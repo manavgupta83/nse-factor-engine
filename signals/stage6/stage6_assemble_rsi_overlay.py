@@ -212,6 +212,29 @@ if MID_MONTH_MODE:
 
     if not mid_sells:
         print("\nNo RSI exits triggered. Portfolio unchanged.")
+        stocks_json = []
+        for sym in sorted(current_holdings):
+            rsi = rsi_results.get(sym, None)
+            stocks_json.append({
+                'symbol': sym,
+                'action': 'HOLD',
+                'rsi'   : round(rsi, 1) if rsi and pd.notna(rsi) else None,
+            })
+        print('<<<MONITOR_JSON_START>>>')
+        print(json.dumps({
+            'mode'             : 'mid_month',
+            'as_of'            : as_of_date.strftime('%d %b %Y'),
+            'run_date'         : run_date.strftime('%d %b %Y'),
+            'rebal_date'       : stored_last_rebalance_date.strftime('%d %b %Y'),
+            'trading_day'      : n_days,
+            'rsi_exit_thresh'  : RSI_EXIT_THRESH,
+            'rsi_entry_thresh' : RSI_ENTRY_THRESH,
+            'n_exits'          : 0,
+            'n_replaced'       : 0,
+            'n_cash'           : 0,
+            'stocks'           : stocks_json,
+        }))
+        print('<<<MONITOR_JSON_END>>>')
         sys.exit(0)
 
     # ── Load watchlist from latest portfolio_recommendations ──────────────────
