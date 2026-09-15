@@ -6,50 +6,55 @@ Stage 6 is the final stage of the NSE Factor Engine pipeline. It takes the ranke
 momentum signals from Stage 5 and applies the MR_M reconstitution algorithm to
 determine the 25-stock portfolio — deciding what to BUY, HOLD, SELL, and WATCHLIST.
 
+**Production file:** `stage6_assemble_rsi_overlay.py`
+`stage6_assemble.py` is retained as fallback only. All new runs use the overlay version.
+
 ---
 
 ## Pipeline Modes
 
-Stage 6 runs in one of two modes, controlled by the `STAGE6_MODE` environment variable:
+Stage 6 runs in one of three modes, controlled by the `STAGE6_MODE` environment variable:
 
 ```bash
-STAGE6_MODE=rebalance python3 signals/stage6/stage6_assemble.py
-STAGE6_MODE=monitor   python3 signals/stage6/stage6_assemble.py
+STAGE6_MODE=rebalance  python3 signals/stage6/stage6_assemble_rsi_overlay.py
+STAGE6_MODE=monitor    python3 signals/stage6/stage6_assemble_rsi_overlay.py
+STAGE6_MODE=mid_month  python3 signals/stage6/stage6_assemble_rsi_overlay.py
 ```
 
 ### What runs in each mode
 
-| Stage | Rebalance | Monitor |
-|---|---|---|
-| Stage 1 — Universe & Liquidity | ✅ Runs | ✅ Runs |
-| Stage 2 — Momentum Core Signals | ✅ Runs | ✅ Runs |
-| Stage 3 — Momentum Quality Signals | ✅ Runs | ✅ Runs |
-| Stage 4 — Entry Quality Filters | ✅ Runs | ✅ Runs |
-| Stage 5 — Ranking & Selection | ✅ Runs | ✅ Runs |
-| Stage 6 — Portfolio Selection | ✅ Runs + writes files | ✅ Runs + prints only |
-| Index Fetch | ✅ Runs | ✅ Runs |
-| Market Movement — Breadth Metrics | ✅ Runs | ✅ Runs |
-| Market Movement — Compute Metrics | ✅ Runs | ✅ Runs |
-| Market Movement — Generate PDF | ✅ Runs | ✅ Runs |
+| Stage | Rebalance | Monitor | Mid-Month |
+|---|---|---|---|
+| Stage 1 — Universe & Liquidity | ✅ Runs | ✅ Runs | ✅ Runs |
+| Stage 2 — Momentum Core Signals | ✅ Runs | ✅ Runs | ✅ Runs |
+| Stage 3 — Momentum Quality Signals | ✅ Runs | ✅ Runs | ✅ Runs |
+| Stage 4 — Entry Quality Filters | ✅ Runs | ✅ Runs | ✅ Runs |
+| Stage 5 — Ranking & Selection | ✅ Runs | ✅ Runs | ✅ Runs |
+| Stage 6 — Portfolio Selection | ✅ Runs + writes files | ✅ Runs + prints only | ✅ Runs + writes if exits triggered |
+| Index Fetch | ✅ Runs | ✅ Runs | ✅ Runs |
+| Market Movement — Breadth Metrics | ✅ Runs | ✅ Runs | ✅ Runs |
+| Market Movement — Compute Metrics | ✅ Runs | ✅ Runs | ✅ Runs |
+| Market Movement — Generate PDF | ✅ Runs | ✅ Runs | ✅ Runs |
 
 ### What gets written in each mode
 
-| Output | Rebalance | Monitor |
-|---|---|---|
-| `portfolio_recommendations_{DDMMYYYY}.parquet` | ✅ Written | ❌ Not written |
-| Portfolio state (`portfolio_state.parquet`) | ✅ Updated | ❌ Not updated |
-| Portfolio history snapshot | ✅ Written | ❌ Not written |
-| Reject tracker CSV | ✅ Written | ❌ Not written |
-| Beta parquet (`stage6/beta/beta_{DDMMYYYY}.parquet`) | ✅ Written | ❌ Not written |
-| 30-day rebalance guard | ✅ Enforced | ❌ Bypassed |
+| Output | Rebalance | Monitor | Mid-Month |
+|---|---|---|---|
+| `portfolio_recommendations_{DDMMYYYY}.parquet` | ✅ Written | ❌ Not written | ❌ Not written |
+| `portfolio_recommendations_{DDMMYYYY}_mid.parquet` | ❌ Not written | ❌ Not written | ✅ Written (if exits triggered) |
+| `portfolio_state.parquet` | ✅ Updated (SOM) | ❌ Not updated | ✅ Updated (MID exits/entries) |
+| Portfolio history snapshot | ✅ Written | ❌ Not written | ❌ Not written |
+| Reject tracker CSV | ✅ Written | ❌ Not written | ❌ Not written |
+| 30-day rebalance guard | ✅ Enforced | ❌ Bypassed | ❌ Bypassed |
+| 10-trading-day mid-month guard | ❌ N/A | ❌ N/A | ✅ Enforced |
 
 ### What Telegram receives in each mode
 
-| Telegram Output | Rebalance | Monitor |
-|---|---|---|
-| Portfolio PDF | ✅ Sent | ❌ Not sent |
-| Monitor card (per-stock RSI, beta, alpha) | ❌ Not sent | ✅ Sent |
-| Market movement PDF | ✅ Sent | ✅ Sent |
+| Telegram Output | Rebalance | Monitor | Mid-Month |
+|---|---|---|---|
+| Portfolio PDF | ✅ Sent | ❌ Not sent | ❌ Not sent |
+| Monitor card (per-stock RSI, beta, alpha) | ❌ Not sent | ✅ Sent | ✅ Sent (same format) |
+| Market movement PDF | ✅ Sent | ✅ Sent | ✅ Sent |
 
 ---
 
@@ -74,7 +79,7 @@ STAGE6_MODE=rebalance python3 run_pipeline.py
 
 Runs the full pipeline but Stage 6 only prints the current portfolio state — what
 would happen if rebalancing occurred today, without writing anything or changing
-portfolio state. Useful for mid-month portfolio monitoring.
+portfolio state.
 
 **Trigger via Telegram:** `/run_pipeline` → `👁 Monitor`
 
@@ -84,9 +89,85 @@ cd /home/ec2-user/nse-factor-engine
 STAGE6_MODE=monitor python3 run_pipeline.py
 ```
 
-### Monitor card format (Telegram)
+---
 
-Each stock is shown as a 2-line card:
+## Mid-Month Mode
+
+Runs the full pipeline. Stage 6 executes the day-10 RSI filter on current holdings,
+exits weak stocks, replaces with strong watchlist candidates, and updates
+`portfolio_state.parquet`. Output format on Telegram is identical to Monitor mode.
+
+**Key difference from Monitor:** Mid-month WRITES to `portfolio_state.parquet`.
+Monitor is read-only.
+
+**Trigger via Telegram:** `/run_pipeline` → `🔀 Mid-Month`
+
+**Trigger via CLI:**
+```bash
+cd /home/ec2-user/nse-factor-engine
+STAGE6_MODE=mid_month python3 run_pipeline.py
+```
+
+### Mid-month logic
+Count trading days since last_rebalance_date
+→ If < CHECK_DAY (10): print status and exit — not yet due
+(~10 trading days ≈ 15 calendar days = mid-month checkpoint)
+For each held stock, compute Wilder EMA RSI-14 using today's prices
+→ If RSI < RSI_EXIT_THRESH (50): flag as MID_SELL
+Load WATCHLIST from latest portfolio_recommendations_*.parquet
+→ For each MID_SELL, scan watchlist by mr_rank order:
+Compute RSI at today's date
+First candidate with RSI > RSI_ENTRY_THRESH (50) → MID_BUY
+→ If no eligible replacement found: slot goes to cash until next SOM
+Update portfolio_state.parquet:
+Remove MID_SELL stocks
+Add MID_BUY stocks (entry_date=today, entry_type='MID')
+last_rebalance_date unchanged — 30-day guard not reset
+Write portfolio_recommendations_{DDMMYYYY}_mid.parquet
+Emit monitor-compatible JSON for Telegram
+
+### RSI exit conditions
+
+| Condition | Action |
+|---|---|
+| RSI < 50 (RSI_EXIT_THRESH) | MID_SELL — exit at next open |
+| RSI not computable (insufficient history) | Stay — filter skipped |
+| No watchlist candidate with RSI > 50 | MID_SELL goes to cash |
+
+### Configurable parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `CHECK_DAY` | 10 | Minimum trading days since rebalance before mid-month triggers |
+| `RSI_EXIT_THRESH` | 50 | Exit held stock if Wilder EMA RSI-14 < this |
+| `RSI_ENTRY_THRESH` | 50 | Replacement must have Wilder EMA RSI-14 > this |
+
+---
+
+## portfolio_state.parquet Schema
+
+Extended schema (as of September 2026):
+
+| Column | Description |
+|---|---|
+| `symbol` | Stock symbol |
+| `last_rebalance_date` | Date of last SOM rebalance (unchanged by mid-month) |
+| `entry_date` | Date this position was initiated (SOM rebalance or mid-month entry) |
+| `entry_type` | `'SOM'` (start of month rebalance) or `'MID'` (mid-month replacement) |
+
+**Buffer zone**: at the next SOM rebalance, MID-entry stocks are treated identically
+to SOM-entry stocks — they benefit from the same buffer zone (rank ≤ 38 protection).
+`entry_type` is informational only; reconstitution does not distinguish between them.
+
+**Backward compatibility**: if old `portfolio_state.parquet` (without `entry_date`/
+`entry_type`) is read, defaults to `entry_date=last_rebalance_date`, `entry_type='SOM'`.
+
+---
+
+## Monitor / Mid-Month Card Format (Telegram)
+
+Both monitor and mid-month use the same Telegram output format. Each stock is
+shown as a 2-line card:
 
 🔵 1. LAURUSLABS (4.88)
 RSI(rebal→now) 60→74 (+14) | β:0.95 | α:+101% | R:+102%
@@ -102,6 +183,10 @@ RSI(rebal→now) 60→74 (+14) | β:0.95 | α:+101% | R:+102%
 | 🔴 Red | rebal RSI ≥ 50, today RSI < 50 | ⚠️ Yes |
 | 🔵 Blue | rebal RSI ≥ 50, today RSI ≥ 50 | No |
 
+**Section order:** HOLDs by rank → EXITs by rank → BUYs by rank
+
+**Mid-month specific header** includes: trading day count, n exits, n replaced, n cash slots.
+
 **Exit signal conditions (⚠️):**
 - Rebal RSI & Today RSI both < 50 with RSI flat/declining
 - Rebal RSI > 50 and Today RSI < 50
@@ -112,7 +197,7 @@ RSI(rebal→now) 60→74 (+14) | β:0.95 | α:+101% | R:+102%
 
 ### `portfolio_recommendations_{DDMMYYYY}.parquet`
 
-Written on every rebalance. One row per stock in the scored universe. Key columns:
+Written on every SOM rebalance. One row per stock in the scored universe. Key columns:
 
 | Column | Description |
 |---|---|
@@ -122,16 +207,28 @@ Written on every rebalance. One row per stock in the scored universe. Key column
 | `action` | `BUY`, `HOLD`, `SELL`, `WATCHLIST` |
 | `mr_rank` | Momentum rank (1 = highest score) |
 | `norm_momentum_score` | Momentum score |
-| `rsi_14` | RSI-14 at signal date |
+| `rsi_14` | Wilder EMA RSI-14 at signal date |
 | `beta_12m` | 12-month beta vs Nifty500 |
 | `alpha_12m` | Jensen alpha over 12 months |
-| `stock_12m_ret` | 12-month compounded return |
-| `market_12m_ret` | Nifty500 12-month return |
 | `portfolio_beta` | Equal-weighted portfolio beta |
+| `market_12m_ret` | Nifty500 12-month return |
+
+### `portfolio_recommendations_{DDMMYYYY}_mid.parquet`
+
+Written on mid-month runs where at least one RSI exit is triggered. Key columns:
+
+| Column | Description |
+|---|---|
+| `symbol` | Stock symbol |
+| `action` | `HOLD`, `MID_SELL`, `MID_BUY` |
+| `tier` | `TOP_25` or `MID_SELL` |
+| `rsi_today` | Wilder EMA RSI-14 at run date |
+| `mr_rank` | Momentum rank (MID_BUY only) |
+| `entry_type` | `HOLD`, `MID_SELL`, or `MID` |
 
 ### `beta/beta_{DDMMYYYY}.parquet`
 
-Written on every rebalance. One row per stock plus one PORTFOLIO summary row.
+Written on every SOM rebalance. One row per stock plus one PORTFOLIO summary row.
 See `metrics/README.md` for full column reference.
 
 ---
@@ -151,10 +248,10 @@ Tip: run with STAGE6_MODE=monitor to see current rankings without rebalancing.
 
 ## Index Data & Market Movement
 
-Both rebalance and monitor modes run the index fetch and market movement stages.
-However, `fetch_index_data.py` has a same-day guard (`data/last_run_date.txt`) —
-it will skip if already run today. On weekends and market holidays, yfinance returns
-no new data and no new parquet is created, but `last_run_date.txt` is still updated.
+All three modes (rebalance, monitor, mid_month) run the index fetch and market
+movement stages. `fetch_index_data.py` has a same-day guard (`data/last_run_date.txt`)
+— it will skip if already run today. On weekends and market holidays, yfinance returns
+no new data but `last_run_date.txt` is still updated.
 
 If the index data appears stale, delete the guard file and re-run:
 
@@ -169,7 +266,8 @@ STAGE6_MODE=monitor python3 run_pipeline.py
 
 | File | Purpose |
 |---|---|
-| `stage6_assemble.py` | Main Stage 6 orchestrator |
+| `stage6_assemble_rsi_overlay.py` | **Production** — REBALANCE + MONITOR + MID_MONTH modes |
+| `stage6_assemble.py` | Legacy fallback — REBALANCE + MONITOR only, no RSI overlay |
 | `metrics/mr_score.py` | Momentum scoring |
 | `metrics/mr_reconstitute.py` | MR_M reconstitution algorithm |
 | `metrics/mr_beta.py` | 12-month beta and alpha calculator |
@@ -216,11 +314,48 @@ additive. **60/40 (12m:6m) is adopted as the production weight configuration.**
 
 ---
 
+## Rebalance Cadence Experiments
+
+Tested on V3 (60/40) to evaluate whether more frequent rebalancing improves returns.
+
+| Variant | Cadence | CAGR | Sharpe | MaxDD | Notes |
+|---|---|---|---|---|---|
+| V3 Monthly | Monthly | 34.12% | 1.197 | -35.08% | Baseline |
+| V3 15D | Every 14 days | 30.40% | 1.062 | -34.63% | Worse — churn on monthly signal |
+| V3 15D + RSI | Every 14 days + RSI exits | 35.94% | 1.262 | -33.42% | RSI filter rescues bi-weekly |
+
+**Finding:** More frequent rebalancing alone hurts (signal half-life is ~1 month).
+Adding the RSI exit filter to bi-weekly rebalancing recovers and slightly exceeds
+the monthly baseline. However the operational complexity of bi-weekly rebalancing
+makes monthly + mid-month RSI overlay the preferred production approach.
+
+---
+
+## Mid-Month RSI Replacement — Backtest Results
+
+Full end-to-end simulation (`v3_rsi_replacement_sim.py`) of the production
+mid-month RSI overlay with replacement (not just exit to cash). Backtest period:
+January 2016 → June 2026. Gross figures (no cost deduction in simulation).
+
+| Variant | CAGR | Sharpe | MaxDD | Notes |
+|---|---|---|---|---|
+| V3 Monthly gross | 34.12% | 1.197 | -35.08% | No RSI overlay |
+| V3 overlay — cash (net) | 37.83% | 1.484 | -19.82% | Exit to cash, no replacement |
+| V3 overlay — replacement (net) | 38.02% | 1.454 | -19.55% | Exit + replace with watchlist |
+| V3 RSI Sim — replacement (gross) | 40.54% | 1.485 | -20.20% | Full simulation, gross |
+
+**MaxDD improvement** is the most striking result: -35% → -20% by adding the
+mid-month RSI exit. This is the primary reason the overlay is adopted in production.
+
+**Gross vs net gap** (~2.5%) is explained by transaction costs from mid-month trades
+(~10 exits/month average × 0.04% per side).
+
+---
+
 ## Regime-Conditional Breakdown — Factor Weight Variants
 
 All metrics below are net of costs + Day15 RSI<50 overlay. Regime labels sourced
-from the HMM forward algorithm (causal, no lookahead) — regime assigned at signal
-date (end-of-month Friday when portfolio is constructed). Backtest window: Jan 2016
+from the HMM forward algorithm (causal, no lookahead). Backtest window: Jan 2016
 → Jun 2026 (126 months). `*` = best value in row across all variants.
 
 ### Bull Regime (88 months)
@@ -261,10 +396,7 @@ date (end-of-month Friday when portfolio is constructed). Backtest window: Jan 2
 | Choppy | 2.55% | 2.76% | +0.21% | 1.051 | 1.160 | +0.109 |
 | Crisis | 1.15% | 1.54% | +0.38% | 0.254 | 0.344 | +0.090 |
 
-V3 (60/40) wins on mean return and Sharpe in both Bull and Choppy regimes. The
-advantage is larger in Choppy (+0.21% mean, +0.109 Sharpe) than in Bull (+0.07%,
-+0.028) — consistent with the 12m signal being more robust when market direction
-is unclear. Crisis sample (4 months) is too thin to be conclusive.
+V3 (60/40) wins on mean return and Sharpe in both Bull and Choppy regimes.
 
 ---
 
@@ -272,7 +404,6 @@ is unclear. Crisis sample (4 months) is too thin to be conclusive.
 
 All figures net of costs + Day15 RSI<50 mid-month exit overlay applied.
 Backtest period: January 2016 → June 2026 (126 monthly periods, 10.5 years).
-RSI overlay is applied mid-month only — not at rebalance.
 
 ### Summary metrics
 
