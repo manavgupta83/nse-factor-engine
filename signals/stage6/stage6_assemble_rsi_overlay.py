@@ -1,16 +1,18 @@
 """
 Stage 6 RSI Overlay (production) — Portfolio Selection with Mid-Month RSI Filter
+
 =================================================================================
+
 Drop-in replacement for stage6_assemble.py. Adds MID_MONTH mode on top of
 the existing REBALANCE and MONITOR modes.
 
 Modes:
-  REBALANCE  (default)          : identical to stage6_assemble.py + writes
-                                  entry_date, entry_type to portfolio_state.parquet
-  MONITOR    (STAGE6_MODE=monitor)    : identical to stage6_assemble.py (read-only)
-  MID_MONTH  (STAGE6_MODE=mid_month)  : NEW — executes day-15 RSI filter:
-                                        exit weak holdings, replace with strong
-                                        watchlist stocks, write updated state
+  REBALANCE (default)      : identical to stage6_assemble.py + writes
+                             entry_date, entry_type to portfolio_state.parquet
+  MONITOR (STAGE6_MODE=monitor)    : identical to stage6_assemble.py (read-only)
+  MID_MONTH (STAGE6_MODE=mid_month): NEW — executes day-15 RSI filter:
+                             exit weak holdings, replace with strong
+                             watchlist stocks, write updated state
 
 Mid-month logic:
   1. Count trading days since last_rebalance_date
@@ -22,24 +24,29 @@ Mid-month logic:
      → MID_BUY that stock
      → If none found: slot goes to cash
   4. Write updated portfolio_state.parquet
-  5. Write portfolio_recommendations_{DDMMYYYY}_mid.parquet
+  5. Write portfolio_recommendations_{DDMMYYYY}_mid.parquet  (+ abs momentum cols)
   6. Output JSON for Telegram bot
 
 portfolio_state.parquet schema (extended):
   symbol | last_rebalance_date | entry_date | entry_type ('SOM' | 'MID')
 
 Fallback: if old portfolio_state.parquet (without entry_date/entry_type) is read,
-          defaults to entry_date=last_rebalance_date, entry_type='SOM'.
+defaults to entry_date=last_rebalance_date, entry_type='SOM'.
 
 Configurable:
-  RSI_EXIT_THRESH  = 50
+  RSI_EXIT_THRESH = 50
   RSI_ENTRY_THRESH = 50
-  CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
+  CHECK_DAY = 10  # ~15 calendar days = ~10 trading days
+
+Abs Momentum Scorecard (REBALANCE + MID_MONTH only):
+  Appends 8 columns to output parquets via abs_momentum_scorecard.score_momentum():
+  MA_Position | RSI_Strength | Acceleration | Hi52W_Proximity |
+  Trend_Strength | Volume_Confirm | Score | AbsMom_Tier
 
 Usage:
-  python3 stage6_assemble_rsi_overlay.py                       # rebalance
-  STAGE6_MODE=monitor   python3 stage6_assemble_rsi_overlay.py # monitor
-  STAGE6_MODE=mid_month python3 stage6_assemble_rsi_overlay.py # mid-month RSI
+  python3 stage6_assemble_rsi_overlay.py                        # rebalance
+  STAGE6_MODE=monitor python3 stage6_assemble_rsi_overlay.py    # monitor
+  STAGE6_MODE=mid_month python3 stage6_assemble_rsi_overlay.py  # mid-month RSI
 """
 
 import os, glob, re, sys, json
@@ -49,28 +56,31 @@ import numpy as np
 
 BASE = "/home/ec2-user/nse-factor-engine/"
 sys.path.insert(0, BASE + "signals/stage6/metrics")
-from mr_score       import apply_mr_score, USE_G6_GATE
+
+from mr_score import apply_mr_score, USE_G6_GATE
 from mr_reconstitute import apply_reconstitution, PORTFOLIO_N, BUFFER_ZONE, FORCED_IN_N
-from mr_beta        import compute_beta, beta_to_df, beta_for_assembly
+from mr_beta import compute_beta, beta_to_df, beta_for_assembly
+from abs_momentum_scorecard import score_momentum
 
 # ── Mode ──────────────────────────────────────────────────────────────────────
 _mode = os.environ.get("STAGE6_MODE", "").lower()
-REBALANCE_MODE  = _mode not in ("monitor", "mid_month")
-MONITOR_MODE    = _mode == "monitor"
-MID_MONTH_MODE  = _mode == "mid_month"
+REBALANCE_MODE = _mode not in ("monitor", "mid_month")
+MONITOR_MODE   = _mode == "monitor"
+MID_MONTH_MODE = _mode == "mid_month"
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PORTFOLIO_STATE_PATH  = Path(BASE + "portfolio/portfolio_state.parquet")
 PORTFOLIO_HISTORY_DIR = Path(BASE + "portfolio/portfolio_history/")
 STAGE6_OUTPUT_DIR     = Path(BASE + "signals/stage6/")
 PRICES_PATH           = BASE + "data/prices.parquet"
+
 REBALANCE_DAYS         = 30   # calendar days (legacy reference)
 REBALANCE_TRADING_DAYS = 21   # trading days guard for rebalance (~4 weeks)
 
 # ── Mid-month config ──────────────────────────────────────────────────────────
-CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
-RSI_EXIT_THRESH  = 50
-RSI_ENTRY_THRESH = 50
+CHECK_DAY         = 10   # ~15 calendar days = ~10 trading days
+RSI_EXIT_THRESH   = 50
+RSI_ENTRY_THRESH  = 50
 
 # ── RSI helpers ───────────────────────────────────────────────────────────────
 def load_prices_by_sym():
@@ -103,15 +113,15 @@ def trading_days_since(since_date):
     """List of trading days from since_date (exclusive) to today (inclusive)."""
     px_dates = pd.read_parquet(PRICES_PATH, columns=['date'])
     px_dates['date'] = pd.to_datetime(px_dates['date'])
-    all_dates  = sorted(px_dates['date'].unique())
-    since_ts   = pd.Timestamp(since_date)
-    today      = pd.Timestamp.now().normalize()
+    all_dates = sorted(px_dates['date'].unique())
+    since_ts  = pd.Timestamp(since_date)
+    today     = pd.Timestamp.now().normalize()
     return [d for d in all_dates if since_ts < d <= today]
 
 # ── Resolve latest Stage 5 signals ───────────────────────────────────────────
 signals_files = glob.glob(BASE + "signals/final/momentum_signals_final_*.parquet")
 signals_files = [f for f in signals_files if "_pre_stage" not in f]
-date_re       = re.compile(r"momentum_signals_final_(\d{8})\.parquet$")
+date_re = re.compile(r"momentum_signals_final_(\d{8})\.parquet$")
 dated = []
 for f in signals_files:
     m = date_re.search(f)
@@ -129,16 +139,17 @@ print(f"USE_G6_GATE      : {USE_G6_GATE}")
 print(f"PORTFOLIO_N      : {PORTFOLIO_N}")
 print(f"BUFFER_ZONE      : {BUFFER_ZONE}")
 print(f"FORCED_IN_N      : {FORCED_IN_N}")
-print(f"RSI_EXIT_THRESH  : {RSI_EXIT_THRESH}  (mid-month exit if RSI < this)")
-print(f"RSI_ENTRY_THRESH : {RSI_ENTRY_THRESH}  (replacement if RSI > this)")
-print(f"CHECK_DAY        : {CHECK_DAY}  (trading days into period)")
+print(f"RSI_EXIT_THRESH  : {RSI_EXIT_THRESH} (mid-month exit if RSI < this)")
+print(f"RSI_ENTRY_THRESH : {RSI_ENTRY_THRESH} (replacement if RSI > this)")
+print(f"CHECK_DAY        : {CHECK_DAY} (trading days into period)")
 print(f"Signals path     : {SIGNALS_PATH}")
 print("=" * 70)
 
-signals    = pd.read_parquet(SIGNALS_PATH)
-as_of_date = pd.Timestamp(signals['as_of_date'].iloc[0])
-run_date   = pd.Timestamp.now(tz='Asia/Kolkata').normalize().tz_localize(None)
+signals     = pd.read_parquet(SIGNALS_PATH)
+as_of_date  = pd.Timestamp(signals['as_of_date'].iloc[0])
+run_date    = pd.Timestamp.now(tz='Asia/Kolkata').normalize().tz_localize(None)
 run_date_ddmmyyyy = run_date.strftime('%d%m%Y')
+
 print(f"as_of_date : {as_of_date.date()}")
 print(f"run_date   : {run_date.date()}")
 
@@ -160,9 +171,9 @@ if PORTFOLIO_STATE_PATH.exists():
     print(f"\nPortfolio state : {len(current_holdings)} holdings | "
           f"last_rebalance={stored_last_rebalance_date.date() if stored_last_rebalance_date else 'None'}")
 else:
-    portfolio_state            = pd.DataFrame()
-    current_holdings           = set()
-    stored_last_rebalance_date = None
+    portfolio_state             = pd.DataFrame()
+    current_holdings            = set()
+    stored_last_rebalance_date  = None
     print("\nNo existing portfolio state — first run.")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -189,11 +200,10 @@ if MID_MONTH_MODE:
         sys.exit(0)
 
     # ── Guard 2: block if mid_month already ran in this cycle recently ────────
-    mid_entries = portfolio_state[portfolio_state['entry_type'] == 'MID']         if 'entry_type' in portfolio_state.columns else pd.DataFrame()
-
+    mid_entries = portfolio_state[portfolio_state['entry_type'] == 'MID'] if 'entry_type' in portfolio_state.columns else pd.DataFrame()
     if not mid_entries.empty:
-        latest_mid_date = pd.Timestamp(mid_entries['entry_date'].max())
-        td_since_mid    = len(trading_days_since(latest_mid_date))
+        latest_mid_date  = pd.Timestamp(mid_entries['entry_date'].max())
+        td_since_mid     = len(trading_days_since(latest_mid_date))
         print(f"Last MID entry: {latest_mid_date.date()} "
               f"({td_since_mid} trading days ago)")
         if td_since_mid < CHECK_DAY:
@@ -219,7 +229,7 @@ if MID_MONTH_MODE:
     print(f"\nRSI computed for {len(rsi_results)} held stocks:")
     for sym, rsi in sorted(rsi_results.items()):
         flag = ' ← EXIT' if pd.notna(rsi) and rsi < RSI_EXIT_THRESH else ''
-        print(f"  {sym:20s}  RSI={rsi}{flag}")
+        print(f"  {sym:20s} RSI={rsi}{flag}")
 
     # ── Identify RSI exits ────────────────────────────────────────────────────
     mid_sells = {
@@ -231,7 +241,6 @@ if MID_MONTH_MODE:
     # ── Load last portfolio_recommendations for enrichment + watchlist ────────
     port_files = sorted(STAGE6_OUTPUT_DIR.glob("portfolio_recommendations_*.parquet"))
     port_files = [f for f in port_files if '_mid' not in f.name]
-
     if not port_files:
         print("ERROR: No portfolio_recommendations_*.parquet found.")
         sys.exit(1)
@@ -244,12 +253,12 @@ if MID_MONTH_MODE:
     for _, _pr in last_port_df.iterrows():
         _s = _pr['symbol']
         _enrich[_s] = {
-            'rank'     : int(_pr['mr_rank'])              if pd.notna(_pr.get('mr_rank'))              else 999,
+            'rank'     : int(_pr['mr_rank']) if pd.notna(_pr.get('mr_rank')) else 999,
             'score'    : round(float(_pr['norm_momentum_score']), 2) if pd.notna(_pr.get('norm_momentum_score')) else None,
-            'ret12m'   : round(float(_pr['ret_12m1m']), 4) if pd.notna(_pr.get('ret_12m1m'))            else None,
-            'rsi_rebal': round(float(_pr['rsi_14']), 1)   if pd.notna(_pr.get('rsi_14'))               else None,
-            'beta'     : round(float(_pr['beta_12m']), 2) if pd.notna(_pr.get('beta_12m'))              else None,
-            'alpha'    : round(float(_pr['alpha_12m']), 4) if pd.notna(_pr.get('alpha_12m'))            else None,
+            'ret12m'   : round(float(_pr['ret_12m1m']), 4) if pd.notna(_pr.get('ret_12m1m')) else None,
+            'rsi_rebal': round(float(_pr['rsi_14']), 1) if pd.notna(_pr.get('rsi_14')) else None,
+            'beta'     : round(float(_pr['beta_12m']), 2) if pd.notna(_pr.get('beta_12m')) else None,
+            'alpha'    : round(float(_pr['alpha_12m']), 4) if pd.notna(_pr.get('alpha_12m')) else None,
         }
 
     _port_beta = (
@@ -294,18 +303,18 @@ if MID_MONTH_MODE:
         ]
         print('<<<MONITOR_JSON_START>>>')
         print(json.dumps({
-            'mode'             : 'mid_month',
-            'as_of'            : as_of_date.strftime('%d %b %Y'),
-            'rebal_date'       : str(rebal_date),
-            'port_beta'        : _port_beta,
-            'mkt_ret'          : _mkt_ret,
-            'trading_day'      : n_days,
-            'rsi_exit_thresh'  : RSI_EXIT_THRESH,
-            'rsi_entry_thresh' : RSI_ENTRY_THRESH,
-            'n_exits'          : 0,
-            'n_replaced'       : 0,
-            'n_cash'           : 0,
-            'stocks'           : stocks_json,
+            'mode'            : 'mid_month',
+            'as_of'           : as_of_date.strftime('%d %b %Y'),
+            'rebal_date'      : str(rebal_date),
+            'port_beta'       : _port_beta,
+            'mkt_ret'         : _mkt_ret,
+            'trading_day'     : n_days,
+            'rsi_exit_thresh' : RSI_EXIT_THRESH,
+            'rsi_entry_thresh': RSI_ENTRY_THRESH,
+            'n_exits'         : 0,
+            'n_replaced'      : 0,
+            'n_cash'          : 0,
+            'stocks'          : stocks_json,
         }))
         print('<<<MONITOR_JSON_END>>>')
         sys.exit(0)
@@ -327,21 +336,27 @@ if MID_MONTH_MODE:
         for _, wrow in watchlist_df.iterrows():
             candidate = wrow['symbol']
             if candidate in current_holdings:
+                print(f"  SKIP:    {candidate} (rank={int(wrow['mr_rank'])}) → already held")
                 continue
             if candidate in [b['symbol'] for b in mid_buys]:
+                print(f"  SKIP:    {candidate} (rank={int(wrow['mr_rank'])}) → already assigned")
                 continue
             rsi = compute_wilder_rsi(candidate, prices_by_sym, today)
             if pd.notna(rsi) and rsi > RSI_ENTRY_THRESH:
                 mid_buys.append({
-                    'symbol'    : candidate,
-                    'mr_rank'   : int(wrow['mr_rank']),
-                    'rsi_today' : rsi,
-                    'replaces'  : sym,
+                    'symbol'   : candidate,
+                    'mr_rank'  : int(wrow['mr_rank']),
+                    'rsi_today': rsi,
+                    'replaces' : sym,
                 })
                 print(f"  MID_BUY: {candidate} (rank={int(wrow['mr_rank'])}, "
                       f"RSI={rsi:.1f}) → replaces {sym}")
                 found = True
                 break
+            else:
+                rsi_display = f"{rsi:.1f}" if pd.notna(rsi) else "N/A"
+                print(f"  SKIP:    {candidate} (rank={int(wrow['mr_rank'])}, "
+                      f"RSI={rsi_display}) → RSI ≤ {RSI_ENTRY_THRESH}")
         if not found:
             cash_slots.append(sym)
             print(f"  No replacement for {sym} (RSI > {RSI_ENTRY_THRESH} "
@@ -376,50 +391,108 @@ if MID_MONTH_MODE:
     print(f"  Added   : {[b['symbol'] for b in mid_buys]}")
     print(f"  Written : {PORTFOLIO_STATE_PATH}")
 
-    # ── Write portfolio_recommendations_{DDMMYYYY}_mid.parquet ────────────────
+    # ── Build mid_df ──────────────────────────────────────────────────────────
     mid_rows = []
     for sym in sorted(set(updated_state['symbol']) - {b['symbol'] for b in mid_buys}):
-        mid_rows.append({'symbol': sym, 'action': 'HOLD',    'tier': 'TOP_25',  'rsi_today': rsi_results.get(sym, np.nan), 'as_of_date': as_of_date, 'run_date': run_date, 'entry_type': 'HOLD'})
+        mid_rows.append({
+            'symbol'    : sym,
+            'action'    : 'HOLD',
+            'tier'      : 'TOP_25',
+            'rsi_today' : rsi_results.get(sym, np.nan),
+            'as_of_date': as_of_date,
+            'run_date'  : run_date,
+            'entry_type': 'HOLD',
+        })
     for sym in sorted(mid_sells):
-        mid_rows.append({'symbol': sym, 'action': 'MID_SELL','tier': 'MID_SELL','rsi_today': rsi_results.get(sym, np.nan), 'as_of_date': as_of_date, 'run_date': run_date, 'entry_type': 'MID_SELL'})
+        mid_rows.append({
+            'symbol'    : sym,
+            'action'    : 'MID_SELL',
+            'tier'      : 'MID_SELL',
+            'rsi_today' : rsi_results.get(sym, np.nan),
+            'as_of_date': as_of_date,
+            'run_date'  : run_date,
+            'entry_type': 'MID_SELL',
+        })
     for b in mid_buys:
-        mid_rows.append({'symbol': b['symbol'], 'action': 'MID_BUY', 'tier': 'TOP_25', 'mr_rank': b['mr_rank'], 'rsi_today': b['rsi_today'], 'as_of_date': as_of_date, 'run_date': run_date, 'entry_type': 'MID'})
+        mid_rows.append({
+            'symbol'    : b['symbol'],
+            'action'    : 'MID_BUY',
+            'tier'      : 'TOP_25',
+            'mr_rank'   : b['mr_rank'],
+            'rsi_today' : b['rsi_today'],
+            'as_of_date': as_of_date,
+            'run_date'  : run_date,
+            'entry_type': 'MID',
+        })
 
-    mid_df   = pd.DataFrame(mid_rows)
+    mid_df = pd.DataFrame(mid_rows)
+
+    # ── Abs Momentum Scorecard — MID_MONTH ───────────────────────────────────
+    # mid_df is sparse — signal columns live in last_port_df (rebalance parquet).
+    # Step 1: merge signal cols for HOLD + MID_BUY rows (left join; MID_SELL → NaN)
+    SCORECARD_SIGNAL_COLS = [
+        'weinstein_stage2', 'dist_ema_50',
+        'rsi_14', 'pct_pos_days',
+        'ret_3m1m', 'ret_6m1m', 'ret_12m1m', 'smoothness', 'stpb_zscore_21d',
+        'proximity_52w_high', 'bb_pct_b',
+        'rm_r2', 'residual_momentum',
+        'volume_price_pos_move_confirmed', 'mfi_14', 'vol_ratio_21_252',
+    ]
+    cols_available = ['symbol'] + [c for c in SCORECARD_SIGNAL_COLS if c in last_port_df.columns]
+    cols_missing   = [c for c in SCORECARD_SIGNAL_COLS if c not in last_port_df.columns]
+    if cols_missing:
+        print(f"  ⚠️  Signal cols not in last rebalance parquet (will FAIL): {cols_missing}")
+    mid_df = mid_df.merge(last_port_df[cols_available], on='symbol', how='left')
+    print(f"\nRunning Abs Momentum Scorecard on mid_df ...")
+    print(f"  Signal cols merged from last rebalance parquet: {len(cols_available) - 1}/{len(SCORECARD_SIGNAL_COLS)}")
+
+    # Step 2: score HOLD + MID_BUY rows (MID_SELL rows have NaN signals → will FAIL)
+    mid_df = score_momentum(mid_df)
+
+    # Step 3: explicitly set scorecard cols to NA for MID_SELL rows
+    SCORECARD_OUT_COLS = ['MA_Position', 'RSI_Strength', 'Acceleration',
+                          'Hi52W_Proximity', 'Trend_Strength', 'Volume_Confirm',
+                          'Score', 'AbsMom_Tier']
+    mid_sell_mask = mid_df['action'] == 'MID_SELL'
+    mid_df.loc[mid_sell_mask, SCORECARD_OUT_COLS] = pd.NA
+    print(f"  Scorecard columns appended | "
+          f"HOLD/MID_BUY scored, MID_SELL set to NA | "
+          f"Score range (non-sell): "
+          f"{mid_df.loc[~mid_sell_mask, 'Score'].min()}–"
+          f"{mid_df.loc[~mid_sell_mask, 'Score'].max()}")
+
+    # ── Write portfolio_recommendations_{DDMMYYYY}_mid.parquet ────────────────
     mid_path = STAGE6_OUTPUT_DIR / f"portfolio_recommendations_{run_date_ddmmyyyy}_mid.parquet"
     mid_df.to_parquet(mid_path, index=False)
     print(f"\nMid-month recommendations written: {mid_path}")
 
     # ── JSON for Telegram — monitor-compatible format ─────────────────────────
-    # HOLDs: sorted by rank
     hold_syms = sorted(
         set(updated_state['symbol']) - {b['symbol'] for b in mid_buys},
         key=lambda s: _enrich.get(s, {}).get('rank', 999)
     )
     stocks_json = [_make_entry(s, 'HOLD', rsi_results.get(s)) for s in hold_syms]
 
-    # SELLs (MID_SELL mapped to SELL for bot formatting)
     for sym in sorted(mid_sells, key=lambda s: _enrich.get(s, {}).get('rank', 999)):
         stocks_json.append(_make_entry(sym, 'SELL', rsi_results.get(sym)))
 
-    # BUYs (MID_BUY mapped to BUY for bot formatting, includes replaces field)
     for b in sorted(mid_buys, key=lambda x: x['mr_rank']):
         stocks_json.append(_make_entry(b['symbol'], 'BUY', b['rsi_today'], replaces=b['replaces']))
 
     print('<<<MONITOR_JSON_START>>>')
     print(json.dumps({
-        'mode'             : 'mid_month',
-        'as_of'            : as_of_date.strftime('%d %b %Y'),
-        'rebal_date'       : str(rebal_date),
-        'port_beta'        : _port_beta,
-        'mkt_ret'          : _mkt_ret,
-        'trading_day'      : n_days,
-        'rsi_exit_thresh'  : RSI_EXIT_THRESH,
-        'rsi_entry_thresh' : RSI_ENTRY_THRESH,
-        'n_exits'          : len(mid_sells),
-        'n_replaced'       : len(mid_buys),
-        'n_cash'           : len(cash_slots),
-        'stocks'           : stocks_json,
+        'mode'            : 'mid_month',
+        'as_of'           : as_of_date.strftime('%d %b %Y'),
+        'rebal_date'      : str(rebal_date),
+        'port_beta'       : _port_beta,
+        'mkt_ret'         : _mkt_ret,
+        'trading_day'     : n_days,
+        'rsi_exit_thresh' : RSI_EXIT_THRESH,
+        'rsi_entry_thresh': RSI_ENTRY_THRESH,
+        'n_exits'         : len(mid_sells),
+        'n_replaced'      : len(mid_buys),
+        'n_cash'          : len(cash_slots),
+        'stocks'          : stocks_json,
     }))
     print('<<<MONITOR_JSON_END>>>')
 
@@ -447,7 +520,7 @@ if REBALANCE_MODE and stored_last_rebalance_date is not None:
         print(f"{td_count} trading days since last rebalance — proceeding.")
 
 # ── Score + reconstitute ──────────────────────────────────────────────────────
-ranked_df, gate_rejects            = apply_mr_score(signals)
+ranked_df, gate_rejects = apply_mr_score(signals)
 ranked, top25_symbols, wein_rejects = apply_reconstitution(ranked_df, current_holdings)
 
 # ── Beta ──────────────────────────────────────────────────────────────────────
@@ -457,13 +530,13 @@ if MONITOR_MODE:
     beta_result  = compute_beta(beta_symbols, as_of_date,
                                 portfolio_symbols=set(top25_symbols))
 else:
-    beta_result  = compute_beta(set(top25_symbols), as_of_date)
+    beta_result = compute_beta(set(top25_symbols), as_of_date)
 
 beta_df     = beta_to_df(beta_result, as_of_date)
 beta_fields = beta_for_assembly(beta_result)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MONITOR MODE (read-only — identical to stage6_assemble.py)
+# MONITOR MODE (read-only — identical to stage6_assemble.py, no scorecard)
 # ══════════════════════════════════════════════════════════════════════════════
 if MONITOR_MODE:
     print(f"\n{'='*70}")
@@ -478,6 +551,7 @@ if MONITOR_MODE:
                              'weighted_z','weinstein_stage2','ret_12m1m']
                 if c in holding_rows.columns]
         print(holding_rows[cols].to_string(index=False))
+
         would_force_out = holding_rows[holding_rows['mr_rank'] > BUFFER_ZONE]
         if len(would_force_out) > 0:
             print(f"\n  ⚠ Would be forced out (rank > {BUFFER_ZONE}): "
@@ -497,8 +571,8 @@ if MONITOR_MODE:
     port_files = sorted(STAGE6_OUTPUT_DIR.glob("portfolio_recommendations_*.parquet"))
     port_files = [f for f in port_files if '_mid' not in f.name]
     if port_files:
-        last_port_df = pd.read_parquet(port_files[-1])
-        rsi_at_rebal = (
+        last_port_df  = pd.read_parquet(port_files[-1])
+        rsi_at_rebal  = (
             last_port_df[last_port_df['tier'] == 'TOP_25']
             .set_index('symbol')['rsi_14']
             .to_dict()
@@ -539,8 +613,9 @@ if MONITOR_MODE:
                          'ret_12m1m'] + rsi_cols + ['beta_12m','stock_12m_ret','alpha_12m']
             if c in display_df.columns]
     print(display_df[cols].to_string(index=False))
+
     print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
-    print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
+    print(f"  Market 12m return   : {beta_fields['market_return']:.2%}")
 
     _monitor_stocks = []
     for _, _r in display_df.iterrows():
@@ -549,27 +624,28 @@ if MONITOR_MODE:
             'symbol'   : str(_r['symbol']),
             'action'   : str(_r['action']),
             'score'    : round(float(_r['norm_momentum_score']), 2) if pd.notna(_r.get('norm_momentum_score')) else None,
-            'ret12m'   : round(float(_r['ret_12m1m']), 4)           if pd.notna(_r.get('ret_12m1m'))          else None,
+            'ret12m'   : round(float(_r['ret_12m1m']), 4) if pd.notna(_r.get('ret_12m1m')) else None,
             'rsi_rebal': round(float(_r['rsi_14_rebal']), 1) if 'rsi_14_rebal' in _r and pd.notna(_r['rsi_14_rebal']) else None,
             'rsi_today': round(float(_r['rsi_14_today']), 1) if 'rsi_14_today' in _r and pd.notna(_r['rsi_14_today']) else None,
-            'rsi_chg'  : round(float(_r['rsi_chg']), 1)     if 'rsi_chg'      in _r and pd.notna(_r['rsi_chg'])      else None,
-            'beta'     : round(float(_r['beta_12m']), 2)     if 'beta_12m'     in _r and pd.notna(_r['beta_12m'])     else None,
-            'alpha'    : round(float(_r['alpha_12m']), 4)    if 'alpha_12m'    in _r and pd.notna(_r['alpha_12m'])    else None,
+            'rsi_chg'  : round(float(_r['rsi_chg']), 1) if 'rsi_chg' in _r and pd.notna(_r['rsi_chg']) else None,
+            'beta'     : round(float(_r['beta_12m']), 2) if 'beta_12m' in _r and pd.notna(_r['beta_12m']) else None,
+            'alpha'    : round(float(_r['alpha_12m']), 4) if 'alpha_12m' in _r and pd.notna(_r['alpha_12m']) else None,
         })
+
     print('<<<MONITOR_JSON_START>>>')
     print(json.dumps({
-        'as_of'      : as_of_date.strftime('%d %b %Y'),
-        'rebal_date' : str(rebal_date) if port_files else None,
-        'port_beta'  : round(float(beta_fields['portfolio_beta']), 2),
-        'mkt_ret'    : round(float(beta_fields['market_return']), 4),
-        'stocks'     : _monitor_stocks,
+        'as_of'     : as_of_date.strftime('%d %b %Y'),
+        'rebal_date': str(rebal_date) if port_files else None,
+        'port_beta' : round(float(beta_fields['portfolio_beta']), 2),
+        'mkt_ret'   : round(float(beta_fields['market_return']), 4),
+        'stocks'    : _monitor_stocks,
     }))
     print('<<<MONITOR_JSON_END>>>')
 
     projected_top25 = set(top25_df['symbol'])
-    would_buy       = projected_top25 - current_holdings
-    would_sell      = current_holdings - projected_top25
-    would_hold      = projected_top25 & current_holdings
+    would_buy  = projected_top25 - current_holdings
+    would_sell = current_holdings - projected_top25
+    would_hold = projected_top25 & current_holdings
     print(f"\n  Would BUY  ({len(would_buy)})  : {sorted(would_buy)}")
     print(f"  Would HOLD ({len(would_hold)}) : {sorted(would_hold)}")
     print(f"  Would SELL ({len(would_sell)}) : {sorted(would_sell)}")
@@ -598,7 +674,6 @@ if MONITOR_MODE:
 # ══════════════════════════════════════════════════════════════════════════════
 # REBALANCE MODE — full write (extended portfolio_state schema)
 # ══════════════════════════════════════════════════════════════════════════════
-
 extra_cols = [
     'symbol',
     'rsi_14','rsi_7',
@@ -609,25 +684,26 @@ extra_cols = [
     'bb_bandwidth_curr_wk','bb_bandwidth_prev_wk',
     'bb_bandwidth_prev_2wk','bb_bandwidth_prev_3wk','bb_squeeze',
 ]
+
 cols_to_merge = [c for c in extra_cols if c == 'symbol' or c not in ranked.columns]
 if len(cols_to_merge) > 1:
     ranked = ranked.merge(signals[cols_to_merge], on='symbol', how='left',
                           suffixes=('','_dup'))
     ranked = ranked[[c for c in ranked.columns if not c.endswith('_dup')]]
 
-ranked['beta_12m']       = ranked['symbol'].map(beta_fields['stock_beta'])
-ranked['stock_12m_ret']  = ranked['symbol'].map(beta_fields['stock_return'])
-ranked['alpha_12m']      = ranked['symbol'].map(beta_fields['stock_alpha'])
-ranked['market_12m_ret'] = beta_fields['market_return']
-ranked['portfolio_beta'] = beta_fields['portfolio_beta']
-ranked['run_date']       = run_date
-ranked['as_of_date']     = as_of_date
+ranked['beta_12m']      = ranked['symbol'].map(beta_fields['stock_beta'])
+ranked['stock_12m_ret'] = ranked['symbol'].map(beta_fields['stock_return'])
+ranked['alpha_12m']     = ranked['symbol'].map(beta_fields['stock_alpha'])
+ranked['market_12m_ret']= beta_fields['market_return']
+ranked['portfolio_beta']= beta_fields['portfolio_beta']
+ranked['run_date']      = run_date
+ranked['as_of_date']    = as_of_date
 
 # Fully missing SELL rows
 already_in_output = set(ranked['symbol'])
 fully_missing     = current_holdings - already_in_output
 if fully_missing:
-    avail_cols = [c for c in extra_cols if c in signals.columns]
+    avail_cols      = [c for c in extra_cols if c in signals.columns]
     missing_metrics = signals[signals['symbol'].isin(fully_missing)][avail_cols].copy()
     missing_metrics['tier']       = 'SELL'
     missing_metrics['action']     = 'SELL'
@@ -639,23 +715,28 @@ if fully_missing:
     missing_metrics = missing_metrics[ranked.columns]
     ranked = pd.concat([ranked, missing_metrics], ignore_index=True)
 
+# ── Abs Momentum Scorecard — REBALANCE ───────────────────────────────────────
+print("\nRunning Abs Momentum Scorecard on ranked df ...")
+ranked = score_momentum(ranked)
+print(f"  Scorecard columns appended: Score range {ranked['Score'].min()}–{ranked['Score'].max()}")
+
 # Write recommendations
 output_path = STAGE6_OUTPUT_DIR / f"portfolio_recommendations_{run_date_ddmmyyyy}.parquet"
 action_order = {'BUY': 0, 'HOLD': 1, 'WATCHLIST': 2, 'SELL': 3}
 ranked['_sort_key'] = ranked['action'].map(action_order).fillna(99)
 ranked = ranked.sort_values(['_sort_key','mr_rank']).drop(columns=['_sort_key'])
 ranked.to_parquet(output_path, index=False)
-print(f"\nRecommendations written : {output_path}")
+print(f"\nRecommendations written  : {output_path}")
 
 # Write reject tracker
-gate_rejects['as_of_date']  = as_of_date
-wein_rejects['as_of_date']  = as_of_date
-all_rejects = pd.concat([gate_rejects, wein_rejects], ignore_index=True)
+gate_rejects['as_of_date'] = as_of_date
+wein_rejects['as_of_date'] = as_of_date
+all_rejects  = pd.concat([gate_rejects, wein_rejects], ignore_index=True)
 all_rejects['run_date'] = run_date
 if len(all_rejects) > 0:
     rejects_path = STAGE6_OUTPUT_DIR / f"rejects_{run_date_ddmmyyyy}.csv"
     all_rejects.to_csv(rejects_path, index=False)
-    print(f"Reject tracker written  : {rejects_path}")
+    print(f"Reject tracker written   : {rejects_path}")
 
 # ── Write portfolio_state.parquet (extended schema) ───────────────────────────
 new_portfolio_state = pd.DataFrame({
@@ -665,30 +746,33 @@ new_portfolio_state = pd.DataFrame({
     'entry_type'          : 'SOM',
 })
 new_portfolio_state.to_parquet(PORTFOLIO_STATE_PATH, index=False)
-print(f"Portfolio state updated : {len(new_portfolio_state)} holdings | "
+print(f"Portfolio state updated  : {len(new_portfolio_state)} holdings | "
       f"last_rebalance_date={as_of_date.date()} | entry_type=SOM")
 
 # Write history snapshot
 history_path = PORTFOLIO_HISTORY_DIR / f"portfolio_{run_date_ddmmyyyy}.parquet"
 new_portfolio_state.to_parquet(history_path, index=False)
-print(f"History snapshot written: {history_path}")
+print(f"History snapshot written : {history_path}")
 
 # Summary
 top25_out = ranked[ranked['tier'] == 'TOP_25'].copy()
 if 'mr_rank' in top25_out.columns:
     top25_out = top25_out.sort_values('mr_rank')
+
 print(f"\n{'='*70}")
 print(f"Final TOP_25 ({len(top25_out)} symbols):")
 display_cols = [c for c in ['mr_rank','symbol','action','weinstein_stage2',
                              'norm_momentum_score','weighted_z',
-                             'ret_12m1m','ret_6m1m','vol_252']
+                             'ret_12m1m','ret_6m1m','vol_252',
+                             'Score','AbsMom_Tier']
                 if c in top25_out.columns]
 print(top25_out[display_cols].to_string(index=False))
 
 watchlist = ranked[ranked['action'] == 'WATCHLIST']
 if len(watchlist) > 0:
     print(f"\nWATCHLIST (rank <= {BUFFER_ZONE}, {len(watchlist)} symbols):")
-    wl_cols = [c for c in ['mr_rank','symbol','weinstein_stage2','norm_momentum_score']
+    wl_cols = [c for c in ['mr_rank','symbol','weinstein_stage2',
+                            'norm_momentum_score','Score','AbsMom_Tier']
                if c in watchlist.columns]
     print(watchlist[wl_cols].to_string(index=False))
 
@@ -697,6 +781,7 @@ if len(sells) > 0:
     print(f"\nSELL ({len(sells)} symbols): {sorted(sells['symbol'].tolist())}")
 
 print(f"\n  Portfolio beta (12m) : {beta_fields['portfolio_beta']:.3f}")
-print(f"  Market 12m return    : {beta_fields['market_return']:.2%}")
+print(f"  Market 12m return   : {beta_fields['market_return']:.2%}")
+
 print(f"\nStage 6 RSI Overlay complete.")
 print("=" * 70)
