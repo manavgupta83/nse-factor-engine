@@ -167,3 +167,150 @@ def score_momentum(df: pd.DataFrame) -> pd.DataFrame:
     df['AbsMom_Tier'] = df['Score'].apply(_assign_tier)
 
     return df
+
+# Signals recomputed fresh by compute_fresh_signals()
+FRESH_SIGNAL_COLS = [
+    'rsi_14', 'ret_12m1m', 'ret_6m1m', 'ret_3m1m',
+    'pct_pos_days', 'proximity_52w_high',
+    'dist_ema_20', 'dist_ema_50', 'weinstein_stage2', 'bb_pct_b',
+    'mfi_14', 'vol_ratio_21_252', 'volume_price_pos_move_confirmed',
+]
+
+# Signals NOT recomputable — left stale from last rebalance parquet
+STALE_SIGNAL_COLS = ['smoothness', 'rm_r2', 'residual_momentum', 'stpb_zscore_21d']
+
+
+def compute_fresh_signals(sym_df, as_of_date):
+    """
+    Recompute 13 signal inputs from raw OHLCV data for a single symbol.
+
+    Parameters:
+        sym_df     : DataFrame with columns [date, open, high, low, close, volume]
+                     sorted ascending by date.
+        as_of_date : Compute signals as of this date (today for mid-month).
+
+    Returns:
+        dict with keys matching FRESH_SIGNAL_COLS.
+        Any signal with insufficient data returns np.nan.
+
+    Not recomputed (left stale from last rebalance parquet):
+        smoothness, rm_r2, residual_momentum, stpb_zscore_21d
+    """
+    result = {col: np.nan for col in FRESH_SIGNAL_COLS}
+
+    df = sym_df[sym_df['date'] <= pd.Timestamp(as_of_date)].copy()
+    df = df.sort_values('date').reset_index(drop=True)
+
+    n = len(df)
+    if n < 22:
+        return result
+
+    close  = df['close']
+    high   = df['high']
+    low    = df['low']
+    volume = df['volume']
+
+    # ── RSI 14 (Wilder EMA) ───────────────────────────────────────────────────
+    if n >= 15:
+        delta = close.diff()
+        gain  = delta.clip(lower=0)
+        loss  = (-delta).clip(lower=0)
+        avg_g = gain.ewm(com=13, min_periods=14).mean()
+        avg_l = loss.ewm(com=13, min_periods=14).mean()
+        rs    = avg_g / avg_l.replace(0, np.nan)
+        rsi   = 100 - (100 / (1 + rs))
+        val   = rsi.iloc[-1]
+        result['rsi_14'] = round(float(val), 2) if pd.notna(val) else np.nan
+
+    # ── Returns (skip last month = last 21 trading days) ──────────────────────
+    if n >= 22:
+        p_1m = float(close.iloc[-21])
+
+        if n >= 273:
+            p_12m = float(close.iloc[-252])
+            result['ret_12m1m'] = round((p_1m / p_12m) - 1, 6) if p_12m != 0 else np.nan
+
+        if n >= 147:
+            p_6m = float(close.iloc[-126])
+            result['ret_6m1m'] = round((p_1m / p_6m) - 1, 6) if p_6m != 0 else np.nan
+
+        if n >= 84:
+            p_3m = float(close.iloc[-63])
+            result['ret_3m1m'] = round((p_1m / p_3m) - 1, 6) if p_3m != 0 else np.nan
+
+    # ── pct_pos_days (252 day window) ─────────────────────────────────────────
+    if n >= 2:
+        window     = min(252, n)
+        daily_rets = close.iloc[-window:].pct_change().dropna()
+        if len(daily_rets) > 0:
+            result['pct_pos_days'] = round(float((daily_rets > 0).mean()), 6)
+
+    # ── proximity_52w_high ────────────────────────────────────────────────────
+    if n >= 2:
+        window     = min(252, n)
+        high_52w   = float(high.iloc[-window:].max())
+        curr_close = float(close.iloc[-1])
+        result['proximity_52w_high'] = round(curr_close / high_52w, 6) if high_52w != 0 else np.nan
+
+    # ── dist_ema_20 = (close - EMA20) / EMA20 * 100  (percentage points) ─────
+    if n >= 20:
+        ema20      = close.ewm(span=20, adjust=False).mean()
+        curr_close = float(close.iloc[-1])
+        e20        = float(ema20.iloc[-1])
+        result['dist_ema_20'] = round((curr_close - e20) / e20 * 100, 4) if e20 != 0 else np.nan
+
+    # ── dist_ema_50 = (close - EMA50) / EMA50 * 100  (percentage points) ─────
+    if n >= 50:
+        ema50      = close.ewm(span=50, adjust=False).mean()
+        curr_close = float(close.iloc[-1])
+        e50        = float(ema50.iloc[-1])
+        result['dist_ema_50'] = round((curr_close - e50) / e50 * 100, 4) if e50 != 0 else np.nan
+
+    # ── weinstein_stage2: price > 30W MA AND 30W MA rising ───────────────────
+    if n >= 151:
+        ma30w      = close.rolling(150).mean()
+        curr_ma    = float(ma30w.iloc[-1])
+        prev_ma    = float(ma30w.iloc[-2])
+        curr_close = float(close.iloc[-1])
+        result['weinstein_stage2'] = 1 if (curr_close > curr_ma and curr_ma > prev_ma) else 0
+
+    # ── bb_pct_b: Bollinger Band %B (20 day, 2 std) ───────────────────────────
+    if n >= 20:
+        bb_mid     = close.rolling(20).mean()
+        bb_std     = close.rolling(20).std(ddof=1)
+        bb_upper   = bb_mid + 2 * bb_std
+        bb_lower   = bb_mid - 2 * bb_std
+        bu         = float(bb_upper.iloc[-1])
+        bl         = float(bb_lower.iloc[-1])
+        curr_close = float(close.iloc[-1])
+        bandwidth  = bu - bl
+        result['bb_pct_b'] = round((curr_close - bl) / bandwidth, 6) if bandwidth != 0 else np.nan
+
+    # ── mfi_14: Money Flow Index ──────────────────────────────────────────────
+    if n >= 15:
+        tp      = (high + low + close) / 3
+        rmf     = tp * volume
+        tp_diff = tp.diff()
+        pos_mf  = rmf.where(tp_diff > 0, 0.0)
+        neg_mf  = rmf.where(tp_diff <= 0, 0.0)
+        pos_sum = pos_mf.rolling(14).sum()
+        neg_sum = neg_mf.rolling(14).sum()
+        mfr     = pos_sum / neg_sum.replace(0, np.nan)
+        mfi     = 100 - (100 / (1 + mfr))
+        val     = mfi.iloc[-1]
+        result['mfi_14'] = round(float(val), 2) if pd.notna(val) else np.nan
+
+    # ── vol_ratio_21_252 ──────────────────────────────────────────────────────
+    if n >= 22:
+        vol_21  = float(volume.iloc[-21:].mean())
+        vol_252 = float(volume.iloc[-min(252, n):].mean())
+        result['vol_ratio_21_252'] = round(vol_21 / vol_252, 6) if vol_252 != 0 else np.nan
+
+    # ── volume_price_pos_move_confirmed ───────────────────────────────────────
+    if n >= 22:
+        price_up   = float(close.iloc[-1]) > float(close.iloc[-2])
+        avg_vol_20 = float(volume.iloc[-21:-1].mean())
+        vol_today  = float(volume.iloc[-1])
+        result['volume_price_pos_move_confirmed'] = 1 if (price_up and vol_today > avg_vol_20) else 0
+
+    return result
