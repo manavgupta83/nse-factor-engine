@@ -60,7 +60,7 @@ sys.path.insert(0, BASE + "signals/stage6/metrics")
 from mr_score import apply_mr_score, USE_G6_GATE
 from mr_reconstitute import apply_reconstitution, PORTFOLIO_N, BUFFER_ZONE, FORCED_IN_N
 from mr_beta import compute_beta, beta_to_df, beta_for_assembly
-from abs_momentum_scorecard import score_momentum
+from abs_momentum_scorecard import score_momentum, compute_fresh_signals, FRESH_SIGNAL_COLS
 
 # ── Mode ──────────────────────────────────────────────────────────────────────
 _mode = os.environ.get("STAGE6_MODE", "").lower()
@@ -445,6 +445,30 @@ if MID_MONTH_MODE:
     mid_df = mid_df.merge(last_port_df[cols_available], on='symbol', how='left')
     print(f"\nRunning Abs Momentum Scorecard on mid_df ...")
     print(f"  Signal cols merged from last rebalance parquet: {len(cols_available) - 1}/{len(SCORECARD_SIGNAL_COLS)}")
+
+    # Step 1.5: For MID_BUY stocks — overwrite 13 recomputable signals with fresh values
+    # Stale cols (smoothness, rm_r2, residual_momentum, stpb_zscore_21d) stay from last_port_df
+    if mid_buys:
+        mid_buy_syms     = {b['symbol'] for b in mid_buys}
+        print(f"  Loading fresh OHLCV for {len(mid_buy_syms)} MID_BUY stock(s) ...")
+        px_ohlcv         = pd.read_parquet(PRICES_PATH)
+        px_ohlcv['date'] = pd.to_datetime(px_ohlcv['date'])
+        ohlcv_by_sym     = {
+            sym: grp.sort_values('date').reset_index(drop=True)
+            for sym, grp in px_ohlcv[px_ohlcv['symbol'].isin(mid_buy_syms)].groupby('symbol')
+        }
+        for sym in sorted(mid_buy_syms):
+            sym_df = ohlcv_by_sym.get(sym)
+            if sym_df is None:
+                print(f"    {sym}: no OHLCV data found — signals stay stale from rebalance parquet")
+                continue
+            fresh        = compute_fresh_signals(sym_df, today)
+            cols_updated = []
+            for col in FRESH_SIGNAL_COLS:
+                if col in mid_df.columns and pd.notna(fresh.get(col)):
+                    mid_df.loc[mid_df['symbol'] == sym, col] = fresh[col]
+                    cols_updated.append(col)
+            print(f"    {sym}: {len(cols_updated)}/{len(FRESH_SIGNAL_COLS)} signals refreshed")
 
     # Step 2: score HOLD + MID_BUY rows (MID_SELL rows have NaN signals → will FAIL)
     mid_df = score_momentum(mid_df)
