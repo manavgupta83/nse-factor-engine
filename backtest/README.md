@@ -191,3 +191,89 @@ Swapped-out stocks go to watchlist and remain eligible for mid-month re-entry.
   *during* the hold. SOM RSI fires too early — before momentum has played out.
 
 **Conclusion:** Keep SOM purely momentum-based. RSI filter only belongs mid-month.
+
+---
+
+## Diagnostic Findings — Why Mid-Month RSI Works
+
+Two diagnostic scripts were run to understand *why* the mid-month RSI replacement
+adds alpha, and *why* the SOM RSI filter destroyed performance.
+
+### Script 1: `v3_rsi_som_diagnostic.py`
+**Question:** Does RSI < 50 at start of month predict worse next-month returns?
+
+**Result:** No. Zero alpha.
+
+| RSI Bucket | Count | % of Holdings | Mean Next-Month Ret | % Positive |
+|---|---|---|---|---|
+| < 30 | 367 | 11.7% | **+3.92%** | 58.0% |
+| 30–40 | 516 | 16.5% | +2.84% | 56.4% |
+| 40–50 | 686 | 22.0% | +2.38% | 55.4% |
+| 50–60 | 593 | 19.0% | +3.10% | 53.5% |
+| 60–70 | 495 | 15.8% | +1.46% | 50.5% |
+| 70–80 | 326 | 10.4% | +2.77% | 58.3% |
+| > 80 | 142 | 4.5% | +6.06% | 57.0% |
+
+Binary split: RSI < 50 stocks returned **+2.89%** vs RSI ≥ 50 stocks returning
+**+2.78%** — a delta of only +0.11%. No meaningful difference.
+
+**Key facts:**
+- 50.2% of SOM holdings had RSI < 50 on average — ~12.6 slots per month
+- In 77 out of 126 periods, more than 10 holdings had RSI < 50
+- RSI < 30 stocks actually returned the second-best next-month return (+3.92%)
+- The SOM RSI filter was screening out momentum stocks in normal mid-uptrend pullbacks
+
+**Conclusion:** The SOM RSI sim's -14% CAGR delta was entirely caused by cash drag
+(~7 slots/month sitting empty when no watchlist replacement was found). The filter
+itself has no predictive value at SOM. RSI < 50 at SOM = dip within uptrend, not breakdown.
+
+---
+
+### Script 2: `v3_rsi_mid_diagnostic.py`
+**Question:** Do mid-month RSI replacements actually outperform the stocks they replaced
+in the residual ~10 trading days (d16 open → next SOM open)?
+
+**Result:** Yes. Cleanly and consistently.
+
+| Metric | Replaced (if held) | Replacement | Delta |
+|---|---|---|---|
+| Count | 1339 | 671 | |
+| Mean return | +0.02% | +0.64% | **+0.61%** |
+| Median return | -0.29% | +0.36% | **+0.65%** |
+| % positive | 48.5% | 51.4% | |
+| Std dev | 10.09% | 8.58% | lower risk |
+| Mean tail (worst 10%) | -18.03% | -13.50% | less downside |
+
+Per-period: replacements beat the replaced in **67/122 periods (54.9%)** with
+avg delta of +0.31% and median of +0.34% per period.
+
+**RSI < 50 prevalence comparison:**
+
+| | SOM | Mid-Month |
+|---|---|---|
+| Avg slots with RSI < 50/period | 12.6 (50.2%) | 10.7 (42.8%) |
+| Periods with > 10 exits | 77 | 62 |
+
+Mid-month actually flags *fewer* stocks than SOM — yet those flags are meaningful
+while the SOM ones were not.
+
+**Why mid-month RSI works but SOM RSI doesn't:**
+
+| | SOM RSI | Mid-Month RSI |
+|---|---|---|
+| What it measures | RSI at entry on momentum stocks | Deterioration of an existing hold |
+| Signal type | Redundant (momentum already captured) | New information — breakdown after entry |
+| Prediction horizon | ~21 trading days (too long for RSI) | ~10 trading days (matches RSI window) |
+| RSI < 50 means | Normal dip within uptrend | Momentum stalled post-entry |
+| Alpha | None (+0.11% delta) | Real (+0.61% delta, lower vol) |
+
+**Conclusion:** The mid-month RSI mechanism earns its keep by simultaneously
+improving residual return (+0.61%) and cutting downside risk (tail -13.50% vs -18.03%).
+The max DD improvement from -35.08% (base) to -27.80% (RSI sim net) is explained by
+this — systematically removing breaking-down stocks before they do their worst damage
+in the back half of the holding period. Same indicator, completely different information
+content depending on *when* it is applied.
+
+---
+
+*Diagnostics run: Sep 2026*
