@@ -169,3 +169,25 @@ python3 backtest/vol_check.py                     # volatility diagnostics
 ---
 
 *Last updated: Sep 2026 — after v3_rsi_replacement_sim.py net-of-cost run*
+
+---
+
+## What Didn't Work
+
+### SOM + Mid-Month RSI Filter (`v3_rsi_replacement_som_midmonth_sim.py`)
+Tested adding an RSI filter at **start of month** on top of the existing mid-month check.
+Logic: after momentum-based portfolio construction, any top-25 stock with RSI < 50
+(at signal Friday) gets swapped with the best watchlist stock with RSI > 50.
+Swapped-out stocks go to watchlist and remain eligible for mid-month re-entry.
+
+**Result: CAGR 19.70% net | Sharpe 0.733 | MaxDD -29.68%** — badly underperformed.
+
+**Why it failed:**
+- SOM → cash: 876 instances over 126 months (~7 slots/month with no replacement found)
+- ~28% of the portfolio (7/25 slots) sat in cash at SOM on average
+- Momentum stocks by definition have elevated RSI — RSI < 50 at SOM was screening out
+  best performers before they had a chance to run, not just weak names
+- Mid-month RSI works because it catches stocks that entered strong and then weakened
+  *during* the hold. SOM RSI fires too early — before momentum has played out.
+
+**Conclusion:** Keep SOM purely momentum-based. RSI filter only belongs mid-month.
