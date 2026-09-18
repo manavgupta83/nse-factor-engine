@@ -1,14 +1,39 @@
 # MR_M Backtest — Research Log & File Map
 
+---
+
+## ⭐ CANONICAL BACKTEST — PRODUCTION EQUIVALENT
+
+backtest/v3_rsi_replacement_sim.py
+
+
+This is the single script that mirrors what runs in production:
+- SOM momentum reconstitution (60/40 scoring, buffer=38, forced-in top-12, fill to 25)
+- Mid-month RSI check at day-10 (exit RSI < 50, replace with watchlist RSI > 50)
+- Net of transaction costs (COST = 0.0004 one-way)
+- Uses PortfolioState throughout — live capital, not analytical return chains
+
+**Result: CAGR 38.53% net | Sharpe 1.420 | MaxDD -27.80% | 10.4 years**
+
+All other scripts in this folder are either earlier generations, experiments,
+overlays that depend on pre-computed CSVs, or diagnostic tools. If you want
+to know what the strategy actually does — this is the one to read.
+
+To run:
+```bash
+cd /home/ec2-user/nse-factor-engine
+python3 backtest/v3_rsi_replacement_sim.py
+```
+
+---
+
+## Strategy Core (V3)
+
 **Strategy:** MR_M (Momentum-Ranked, Mid-cap focus)
 **Universe:** NSE stocks (Nifty 500 eligible)
 **Period:** Jan 2016 – Sep 2026 (~10.4 years, 126 monthly periods)
 **Capital base:** ₹1 crore (10M)
 **Run environment:** EC2 `/home/ec2-user/nse-factor-engine/`
-
----
-
-## Strategy Core (V3)
 
 - **Signal:** Every Friday close → compute momentum scores
 - **Execution:** Following Monday open
@@ -18,45 +43,6 @@
 - **Forced-in:** top-12 ranked stocks always enter, displacing weakest holders if needed
 - **Fill:** remaining slots filled to 25 from ranked pool
 - **Transaction cost:** 0.0004 one-way (where modelled)
-
----
-
-## Evolution of Scripts
-
-### Generation 1 — Early explorations (g6/c6)
-
-simulation_fri_signal_mon_open_backtest_g6_c6.py # basic gross sim
-simulation_fri_signal_mon_open_backtest_g6_c6_with_costs.py
-simulation_fri_signal_mon_open_backtest_g6_c6.txt # results snapshot
-
-Early signal/execution cadence experiments. Not the canonical strategy.
-
-### Generation 2 — MR variants
-
-simulation_fri_signal_mon_open_backtest_mr.py # base MR sim
-simulation_fri_signal_mon_open_backtest_mr_variants.py # parameter sweep
-simulation_fri_signal_mon_open_backtest_mr_12way.py # 12-way split test
-simulation_fri_signal_mon_open_backtest_mr_hybrid.py # hybrid scoring
-simulation_fri_signal_mon_open_backtest_mr_targeted.py # targeted entry
-
-MR scoring introduced. These are analytical return-chain sims, not PortfolioState-based.
-
-### Generation 3 — V3 canonical (current)
-
-v3_backtest.py # ✅ BASE: monthly rebalance, PortfolioState, gross
-v3_rsi50_overlay.py # RSI exit → cash (analytical overlay on activity CSV)
-v3_rsi_replacement_overlay.py # RSI exit → watchlist replacement (analytical overlay)
-v3_rsi_replacement_sim.py # ✅ LATEST: full live sim, RSI replacement, net of cost
-
-V3 uses `PortfolioState` throughout. `v3_rsi_replacement_sim.py` is the single most
-complete and accurate script — runs the full strategy end-to-end in one pass.
-
-### Other V3 variants
-
-v3_rsi_backtest.py # RSI filter at entry (not mid-month exit)
-v3_15d_backtest.py # 15-day holding period experiment
-v3_15d_rsi_backtest.py # 15-day hold + RSI filter
-
 
 ---
 
@@ -93,9 +79,48 @@ All results over Jan 2016 – Sep 2026 (~10.4 years).
 | RSI window | 14-period Wilder | Applied to daily closes up to CHECK_DAY |
 
 **Replacement pool:** watchlist stocks ranked ≤ 38, not already held, sorted by mr_rank ascending.
-Entry at day-16 open. If no eligible replacement → freed slot sits in cash until next SOM.
+Entry at day-11 open. If no eligible replacement → freed slot sits in cash until next SOM.
 
 In the Sep 2026 run: 1339 RSI exits over 126 months (10.6/month), 671 replaced (50.1%), 668 went to cash.
+
+---
+
+## Evolution of Scripts
+
+### Generation 1 — Early explorations (g6/c6)
+
+simulation_fri_signal_mon_open_backtest_g6_c6.py # basic gross sim
+simulation_fri_signal_mon_open_backtest_g6_c6_with_costs.py
+simulation_fri_signal_mon_open_backtest_g6_c6.txt # results snapshot
+
+Early signal/execution cadence experiments. Not the canonical strategy.
+
+### Generation 2 — MR variants
+
+simulation_fri_signal_mon_open_backtest_mr.py # base MR sim
+simulation_fri_signal_mon_open_backtest_mr_variants.py # parameter sweep
+simulation_fri_signal_mon_open_backtest_mr_12way.py # 12-way split test
+simulation_fri_signal_mon_open_backtest_mr_hybrid.py # hybrid scoring
+simulation_fri_signal_mon_open_backtest_mr_targeted.py # targeted entry
+
+MR scoring introduced. These are analytical return-chain sims, not PortfolioState-based.
+
+### Generation 3 — V3 canonical (current)
+
+v3_backtest.py # ✅ BASE: monthly rebalance, PortfolioState, gross
+v3_rsi50_overlay.py # RSI exit → cash (analytical overlay on activity CSV)
+v3_rsi_replacement_overlay.py # RSI exit → watchlist replacement (analytical overlay)
+v3_rsi_replacement_sim.py # ✅ CANONICAL: full live sim, RSI replacement, net of cost
+
+V3 uses `PortfolioState` throughout. `v3_rsi_replacement_sim.py` is the single most
+complete and accurate script — runs the full strategy end-to-end in one pass.
+
+### Other V3 variants
+
+v3_rsi_backtest.py # RSI filter at entry (not mid-month exit)
+v3_15d_backtest.py # 15-day holding period experiment
+v3_15d_rsi_backtest.py # 15-day hold + RSI filter
+
 
 ---
 
@@ -165,10 +190,6 @@ python3 backtest/update_registry.py               # update strategy registry
 python3 backtest/position_sizing_compare.py       # compare equal-weight vs other sizing
 python3 backtest/vol_check.py                     # volatility diagnostics
 ```
-
----
-
-*Last updated: Sep 2026 — after v3_rsi_replacement_sim.py net-of-cost run*
 
 ---
 
@@ -276,29 +297,4 @@ content depending on *when* it is applied.
 
 ---
 
-*Diagnostics run: Sep 2026*
-
----
-
-## ⭐ CANONICAL BACKTEST — PRODUCTION EQUIVALENT
-
-backtest/v3_rsi_replacement_sim.py
-
-
-This is the single script that mirrors what runs in production:
-- SOM momentum reconstitution (60/40 scoring, buffer=38, forced-in top-12, fill to 25)
-- Mid-month RSI check at day-10 (exit RSI < 50, replace with watchlist RSI > 50)
-- Net of transaction costs (COST = 0.0004 one-way)
-- Uses PortfolioState throughout — live capital, not analytical return chains
-
-**Result: CAGR 38.53% net | Sharpe 1.420 | MaxDD -27.80% | 10.4 years**
-
-All other scripts in this folder are either earlier generations, experiments,
-overlays that depend on pre-computed CSVs, or diagnostic tools. If you want
-to know what the strategy actually does — this is the one to read.
-
-To run:
-```bash
-cd /home/ec2-user/nse-factor-engine
-python3 backtest/v3_rsi_replacement_sim.py
-```
+*Last updated: Sep 2026*
