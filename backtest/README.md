@@ -277,3 +277,28 @@ content depending on *when* it is applied.
 ---
 
 *Diagnostics run: Sep 2026*
+
+---
+
+## ⭐ CANONICAL BACKTEST — PRODUCTION EQUIVALENT
+
+backtest/v3_rsi_replacement_sim.py
+
+
+This is the single script that mirrors what runs in production:
+- SOM momentum reconstitution (60/40 scoring, buffer=38, forced-in top-12, fill to 25)
+- Mid-month RSI check at day-10 (exit RSI < 50, replace with watchlist RSI > 50)
+- Net of transaction costs (COST = 0.0004 one-way)
+- Uses PortfolioState throughout — live capital, not analytical return chains
+
+**Result: CAGR 38.53% net | Sharpe 1.420 | MaxDD -27.80% | 10.4 years**
+
+All other scripts in this folder are either earlier generations, experiments,
+overlays that depend on pre-computed CSVs, or diagnostic tools. If you want
+to know what the strategy actually does — this is the one to read.
+
+To run:
+```bash
+cd /home/ec2-user/nse-factor-engine
+python3 backtest/v3_rsi_replacement_sim.py
+```
