@@ -1,13 +1,9 @@
 """
-MR_M V3_RSI_SIM — Full End-to-End Simulation
+MR_M V3_RSI_SIM — Full End-to-End Simulation (Net of Costs)
 =============================================
 Single unified simulation combining:
   1. Monthly momentum reconstitution at start of month (identical to v3_backtest.py)
   2. Day-15 RSI mid-month check: exit weak holdings, replace with strong watchlist stocks
-
-This is the live simulation equivalent of running v3_backtest.py followed by
-v3_rsi_replacement_overlay.py, but executed as one coherent portfolio simulation
-using PortfolioState throughout — no post-processing.
 
 Start-of-month (SOM):
   Identical to v3_backtest.py: 60/40 momentum scoring, buffer zone=38,
@@ -25,11 +21,13 @@ Configurable:
   RSI_EXIT_THRESH  = 50
   RSI_ENTRY_THRESH = 50
   CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
+  COST             = 0.0004  # one-way transaction cost
 
 Benchmarks:
   V3 Monthly gross             : CAGR 34.12% | Sharpe 1.197 | MaxDD -35.08%
   V3 overlay to cash (net)     : CAGR 37.83% | Sharpe 1.484 | MaxDD -19.82%
   V3 replacement overlay (net) : CAGR 38.02% | Sharpe 1.454 | MaxDD -19.55%
+  V3 RSI SIM gross             : CAGR 38.94% | Sharpe 1.432 | MaxDD -27.41%
 
 Run from repo root:
   cd /home/ec2-user/nse-factor-engine
@@ -53,6 +51,7 @@ W_12M, W_6M      = 0.60, 0.40
 CHECK_DAY        = 10   # ~15 calendar days = ~10 trading days
 RSI_EXIT_THRESH  = 50    # exit held stock if day-15 RSI < this
 RSI_ENTRY_THRESH = 50    # replacement must have day-15 RSI > this
+COST             = 0.0004  # one-way transaction cost
 VARIANT_LABEL    = 'MR_M_V3_RSI_SIM'
 
 BASE        = 'backtest'
@@ -87,7 +86,7 @@ print('Loading benchmark ...')
 bench = pd.read_parquet(BENCH_PATH).set_index('date')['close']
 bench.index = pd.DatetimeIndex(bench.index)
 
-# ── RSI (identical to v3_rsi50_overlay.py) ───────────────────────────────────
+# ── RSI ───────────────────────────────────────────────────────────────────────
 def wilder_rsi(closes):
     if len(closes) < 15:
         return np.nan
@@ -107,7 +106,7 @@ def compute_rsi(sym, up_to_date):
     closes = sym_df[sym_df['date'] <= up_to_date]['close'].values
     return wilder_rsi(closes)
 
-# ── Scoring (identical to v3_backtest.py) ────────────────────────────────────
+# ── Scoring ───────────────────────────────────────────────────────────────────
 def compute_mr_scores(signals_df):
     df = signals_df[signals_df['in_universe'] == True].copy()
     bad = (
@@ -133,14 +132,8 @@ def compute_mr_scores(signals_df):
     )
     return df.sort_values('mr_rank').reset_index(drop=True)
 
-# ── Reconstitution (identical to v3_backtest.py + returns watchlist) ──────────
+# ── Reconstitution ────────────────────────────────────────────────────────────
 def reconstitute(ranked_df, current_holdings):
-    """
-    Returns: (portfolio set, action_map dict, watchlist_df)
-
-    watchlist_df : stocks ranked <= BUFFER_ZONE not in portfolio, sorted by
-                   mr_rank. This is the replacement pool for mid-month RSI exits.
-    """
     if ranked_df.empty:
         return set(), {}, pd.DataFrame()
 
@@ -189,7 +182,6 @@ def reconstitute(ranked_df, current_holdings):
         if s not in action_map and rank_lookup[s] <= BUFFER_ZONE:
             action_map[s] = 'WATCHLIST'
 
-    # Replacement pool: ranked <= BUFFER_ZONE, not in final portfolio
     watchlist_df = ranked_df[
         (ranked_df['mr_rank'] <= BUFFER_ZONE) &
         (~ranked_df['symbol'].isin(portfolio))
@@ -202,13 +194,29 @@ def enrich(activity, sig_date, action_map, mr_meta, rebal_type):
     for row in activity:
         sym = row['symbol']
         row['signal_date']         = sig_date
-        row['rebal_type']          = rebal_type   # 'SOM' or 'MID'
+        row['rebal_type']          = rebal_type
         row['mr_action']           = action_map.get(sym, row['action'])
         meta = mr_meta.get(sym, {})
         row['mr_rank']             = meta.get('mr_rank', np.nan)
         row['norm_momentum_score'] = meta.get('norm_momentum_score', np.nan)
         row['weighted_z']          = meta.get('weighted_z', np.nan)
     return activity
+
+# ── Cost helper ───────────────────────────────────────────────────────────────
+def compute_cost_drag(activity_df, n_mid_trades):
+    """
+    SOM trades: count BUY + SELL actions from PortfolioState activity.
+    MID trades: n_mid_trades passed in directly (each RSI exit = 1 sell,
+                each replacement = 1 buy, i.e. 2 trades per replaced slot,
+                1 trade per cash slot).
+    Cost drag per period = total_trades * COST / PORTFOLIO_N
+    (approximation: each trade is ~1/PORTFOLIO_N of NAV)
+    """
+    som = activity_df[
+        (activity_df['rebal_type'] == 'SOM') &
+        (activity_df['action'].isin(['BUY', 'SELL']))
+    ].shape[0]
+    return (som + n_mid_trades) * COST / PORTFOLIO_N
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def parse_date(fname):
@@ -254,10 +262,11 @@ print(f'  {len(monthly_pairs)} monthly periods  '
 print(f'\nRunning {VARIANT_LABEL} '
       f'(RSI_EXIT={RSI_EXIT_THRESH}, RSI_ENTRY={RSI_ENTRY_THRESH}) ...')
 state           = PortfolioState(initial_capital=INITIAL_CAPITAL)
-som_nav_path    = []    # month-start NAVs only — used for metrics
+som_nav_path    = []
 all_activity    = []
 total_rsi_exits = 0
 total_replaced  = 0
+period_mid_trades = {}   # exec_date -> n mid-month trades
 t0              = time.time()
 
 for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
@@ -285,9 +294,9 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
 
     all_activity.extend(enrich(activity, sig_date, action_map, mr_meta, 'SOM'))
     som_nav_path.append((sig_date, exec_date, nav_pre, nav_post))
+    period_mid_trades[exec_date] = 0
 
     # ══ MID-MONTH RSI CHECK ═══════════════════════════════════════════════════
-    # Skip for last period (no next exec date to define the holding window)
     if i >= len(monthly_pairs) - 1:
         gc.collect()
         continue
@@ -303,7 +312,6 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
     d16_date = intra_days[CHECK_DAY] if len(intra_days) > CHECK_DAY else intra_days[-1]
     d16_px   = open_by_date.get(d16_date, {})
 
-    # Compute RSI at d15_date for all current holdings
     current_mid = set(state.holdings.keys())
     rsi_exits   = set()
     for sym in current_mid:
@@ -315,7 +323,6 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
         gc.collect()
         continue
 
-    # Find replacements from watchlist (RSI > entry thresh at same d15_date)
     replacements = []
     for _, wrow in watchlist_df.iterrows():
         if len(replacements) >= len(rsi_exits):
@@ -330,7 +337,6 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
             continue
         replacements.append(sym)
 
-    # Build mid-month portfolio and action map
     mid_portfolio  = (current_mid - rsi_exits) | set(replacements)
     mid_action_map = {}
     for s in mid_portfolio:
@@ -338,8 +344,10 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
     for s in rsi_exits:
         mid_action_map[s] = 'MID_SELL_RSI'
 
-    # Execute mid-month rebalance via PortfolioState
-    # Value is conserved: sell proceeds fund replacement buys
+    # Count mid trades: each exit = 1 sell, each replacement = 1 buy
+    n_mid = len(rsi_exits) + len(replacements)
+    period_mid_trades[exec_date] = n_mid
+
     _, _, mid_activity = state.rebalance(
         list(mid_portfolio), d16_px, d16_date, VARIANT_LABEL
     )
@@ -358,13 +366,12 @@ for i, (sig_date, exec_date, sig_path) in enumerate(monthly_pairs):
               f'{elapsed:.0f}s elapsed {remaining:.0f}s ETA', flush=True)
     gc.collect()
 
-# ── NAV series (month-start only → clean monthly period returns) ───────────────
+# ── NAV series ────────────────────────────────────────────────────────────────
 exec_dates = [d for _, d, _, _ in som_nav_path]
 navs       = [v for _, _, _, v in som_nav_path]
 nav_s      = pd.Series(navs)
 wrets      = nav_s.pct_change().values
 wrets[0]   = 0.0
-cum_ret    = (1 + pd.Series(wrets)).cumprod() - 1
 
 bm_vals = []
 for dt in exec_dates:
@@ -376,50 +383,85 @@ for dt in exec_dates:
 bm_ret         = pd.Series(bm_vals).pct_change()
 bm_ret.iloc[0] = 0.0
 
+activity_df = pd.DataFrame(all_activity)
+
+# ── Cost drag per period ──────────────────────────────────────────────────────
+cost_drags = []
+for _, exec_date, _, _ in som_nav_path:
+    period_act = activity_df[
+        (activity_df['date'] == exec_date) &
+        (activity_df['rebal_type'] == 'SOM') &
+        (activity_df['action'].isin(['BUY', 'SELL']))
+    ] if 'date' in activity_df.columns else pd.DataFrame()
+
+    som_trades = len(period_act)
+    mid_trades = period_mid_trades.get(exec_date, 0)
+    drag = (som_trades + mid_trades) * COST / PORTFOLIO_N
+    cost_drags.append(drag)
+
+cum_ret    = (1 + pd.Series(wrets)).cumprod() - 1
 returns_df = pd.DataFrame({
     'signal_friday' : [d for d, _, _, _ in som_nav_path],
     'exec_date'     : pd.to_datetime(exec_dates),
     'nav'           : navs,
     'period_ret'    : wrets,
+    'cost_drag'     : cost_drags,
+    'net_ret'       : [r - c for r, c in zip(wrets, cost_drags)],
     'cum_ret'       : cum_ret.values,
     'benchmark_ret' : bm_ret.values,
 })
-activity_df = pd.DataFrame(all_activity)
 
 # ── Gross metrics ─────────────────────────────────────────────────────────────
-rets         = returns_df['period_ret'].iloc[1:].dropna()
+rets_gross   = returns_df['period_ret'].iloc[1:].dropna()
 days         = (returns_df['exec_date'].iloc[-1] - returns_df['exec_date'].iloc[0]).days
 ny           = days / 365.25
-periods_py   = len(rets) / ny
+periods_py   = len(rets_gross) / ny
 cagr_gross   = (navs[-1] / navs[0]) ** (1/ny) - 1
-sharpe_gross = rets.mean() / rets.std() * np.sqrt(periods_py)
+sharpe_gross = rets_gross.mean() / rets_gross.std() * np.sqrt(periods_py)
 running_max  = pd.Series(navs).cummax()
-max_dd       = ((pd.Series(navs) - running_max) / running_max).min()
-worst        = rets.min()
-tail         = rets.nsmallest(max(1, int(len(rets)*0.10))).mean()
+max_dd_gross = ((pd.Series(navs) - running_max) / running_max).min()
+
+# ── Net metrics ───────────────────────────────────────────────────────────────
+rets_net    = returns_df['net_ret'].iloc[1:].dropna()
+nav_net     = (1 + rets_net).cumprod()
+cagr_net    = nav_net.iloc[-1] ** (1/ny) - 1
+sharpe_net  = rets_net.mean() / rets_net.std() * np.sqrt(periods_py)
+nav_net_s   = (1 + returns_df['net_ret']).cumprod()
+max_dd_net  = (nav_net_s / nav_net_s.cummax() - 1).min()
+worst_net   = rets_net.min()
+tail_net    = rets_net.nsmallest(max(1, int(len(rets_net)*0.10))).mean()
+avg_cost    = returns_df['cost_drag'].mean()
 
 print(f'\n{"="*62}')
-print(f'GROSS RESULTS: {VARIANT_LABEL}')
+print(f'RESULTS: {VARIANT_LABEL}')
 print(f'{"="*62}')
 print(f'  RSI_EXIT_THRESH  : {RSI_EXIT_THRESH}')
 print(f'  RSI_ENTRY_THRESH : {RSI_ENTRY_THRESH}')
+print(f'  COST (one-way)   : {COST}')
 print(f'  Periods          : {len(monthly_pairs)} months over {ny:.1f} years')
 print(f'  Total RSI exits  : {total_rsi_exits} ({total_rsi_exits/len(monthly_pairs):.1f}/month)')
 print(f'  Replaced         : {total_replaced} ({total_replaced/max(1,total_rsi_exits)*100:.1f}% of exits)')
 print(f'  Went to cash     : {total_rsi_exits - total_replaced}')
+print(f'  Avg cost/period  : {avg_cost*100:.4f}%')
+print(f'')
+print(f'  ── GROSS ──')
 print(f'  CAGR             : {cagr_gross*100:.2f}%')
 print(f'  Sharpe           : {sharpe_gross:.3f}')
-print(f'  Max DD           : {max_dd*100:.2f}%')
-print(f'  Worst month      : {worst*100:.2f}%')
-print(f'  Mean tail        : {tail*100:.2f}%')
+print(f'  Max DD           : {max_dd_gross*100:.2f}%')
+print(f'')
+print(f'  ── NET (after costs) ──')
+print(f'  CAGR             : {cagr_net*100:.2f}%')
+print(f'  Sharpe           : {sharpe_net:.3f}')
+print(f'  Max DD           : {max_dd_net*100:.2f}%')
+print(f'  Worst month      : {worst_net*100:.2f}%')
+print(f'  Mean tail        : {tail_net*100:.2f}%')
 print(f'{"="*62}')
 print(f'  vs V3 Monthly gross       : CAGR 34.12% | Sharpe 1.197 | MaxDD -35.08%')
 print(f'  vs V3 overlay cash (net)  : CAGR 37.83% | Sharpe 1.484 | MaxDD -19.82%')
 print(f'  vs V3 replacement (net)   : CAGR 38.02% | Sharpe 1.454 | MaxDD -19.55%')
-print(f'  CAGR delta vs Mo          : {(cagr_gross*100 - 34.12):+.2f}%')
-print(f'  CAGR delta vs replacement : {(cagr_gross*100 - 38.02):+.2f}%')
-print(f'{"="*62}')
-print(f'  NOTE: Gross simulation. Overlay benchmarks above are net of costs.')
+print(f'  vs V3 RSI SIM gross       : CAGR 38.94% | Sharpe 1.432 | MaxDD -27.41%')
+print(f'  CAGR delta vs Mo (net)    : {(cagr_net*100 - 34.12):+.2f}%')
+print(f'  CAGR delta vs repl (net)  : {(cagr_net*100 - 38.02):+.2f}%')
 print(f'{"="*62}')
 
 # ── Save ──────────────────────────────────────────────────────────────────────
