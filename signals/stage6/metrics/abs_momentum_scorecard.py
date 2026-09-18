@@ -3,15 +3,25 @@ abs_momentum_scorecard.py — Absolute Momentum Scorecard Module
 ===============================================================
 
 Callable module for Stage 6 pipeline.
-Exposes: score_momentum(df) -> df with 8 new columns appended.
+Exposes:
+  score_momentum(df)                    -> df with 8 new columns appended.
+  compute_fresh_signals(sym_df, as_of)  -> dict of 13 recomputed signal values.
 
-Metrics (6 total, ROC excluded):
+Metrics (6 total, ROC excluded from scoring but applied as a gate):
   1. MA_Position      — Weinstein Stage 2 + dist_ema_50
   2. RSI_Strength     — rsi_14 + pct_pos_days
   3. Acceleration     — return horizon acceleration + smoothness + stpb_zscore_21d
   4. Hi52W_Proximity  — proximity_52w_high + bb_pct_b
   5. Trend_Strength   — rm_r2 + residual_momentum + smoothness (vs universe median)
   6. Volume_Confirm   — volume_price_pos_move_confirmed + mfi_14 + vol_ratio_21_252
+
+ROC gate (post-scoring override):
+  All three return horizons must be positive:
+    ret_12m1m > 0 AND ret_6m1m > 0 AND ret_3m1m > 0
+  If any horizon is negative:
+    Score     → 0
+    AbsMom_Tier → 'Skip (negative: <failed horizons>)'
+  Individual metric columns are left intact (still show the structural score).
 
 Output columns appended:
   MA_Position | RSI_Strength | Acceleration | Hi52W_Proximity |
@@ -22,6 +32,7 @@ Tier logic (out of 6):
   4-5 → Tier2_Strong
   2-3 → Tier3_Moderate
   <2  → Skip
+  ROC gate fails → Skip (negative: <ret_12m1m / ret_6m1m / ret_3m1m>)
 """
 
 import numpy as np
@@ -40,10 +51,10 @@ def _metric_ma(row):
 
 def _metric_rsi(row):
     """RSI Strength: rsi_14 > 50 AND pct_pos_days > 0.52 (scale 0-1)."""
-    rsi14       = row.get('rsi_14', np.nan)
-    pct_pos     = row.get('pct_pos_days', np.nan)
-    rsi_pass    = (rsi14 > 50)     if pd.notna(rsi14)   else False
-    pct_pass    = (pct_pos > 0.52) if pd.notna(pct_pos) else False
+    rsi14   = row.get('rsi_14', np.nan)
+    pct_pos = row.get('pct_pos_days', np.nan)
+    rsi_pass = (rsi14 > 50)     if pd.notna(rsi14)   else False
+    pct_pass = (pct_pos > 0.52) if pd.notna(pct_pos) else False
     return 'PASS' if (rsi_pass and pct_pass) else 'FAIL'
 
 
@@ -119,6 +130,22 @@ def _assign_tier(score):
     else:            return 'Skip'
 
 
+# ── ROC gate helper ───────────────────────────────────────────────────────────
+
+def _roc_skip_reason(row):
+    """
+    Returns a descriptive Skip string naming which return horizons failed.
+    Called only for rows where at least one horizon is non-positive.
+    NaN values are treated as failed (insufficient data = no positive return).
+    """
+    failed = []
+    for col in ['ret_12m1m', 'ret_6m1m', 'ret_3m1m']:
+        val = row.get(col, np.nan)
+        if pd.isna(val) or val <= 0:
+            failed.append(col)
+    return f"Skip (negative: {', '.join(failed)})" if failed else 'Skip'
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 METRIC_COLS = [
@@ -130,11 +157,28 @@ METRIC_COLS = [
     'Volume_Confirm',
 ]
 
+# Signals recomputed fresh by compute_fresh_signals()
+FRESH_SIGNAL_COLS = [
+    'rsi_14', 'ret_12m1m', 'ret_6m1m', 'ret_3m1m',
+    'pct_pos_days', 'proximity_52w_high',
+    'dist_ema_20', 'dist_ema_50', 'weinstein_stage2', 'bb_pct_b',
+    'mfi_14', 'vol_ratio_21_252', 'volume_price_pos_move_confirmed',
+]
+
+# Signals NOT recomputable — left stale from last rebalance parquet
+STALE_SIGNAL_COLS = ['smoothness', 'rm_r2', 'residual_momentum', 'stpb_zscore_21d']
+
+
 def score_momentum(df: pd.DataFrame) -> pd.DataFrame:
     """
     Accept a dataframe (ranked/mid recommendations) and append 8 columns:
       MA_Position | RSI_Strength | Acceleration | Hi52W_Proximity |
       Trend_Strength | Volume_Confirm | Score | AbsMom_Tier
+
+    Post-scoring ROC gate:
+      If ret_12m1m <= 0 OR ret_6m1m <= 0 OR ret_3m1m <= 0:
+        Score = 0, AbsMom_Tier = 'Skip (negative: <col names>)'
+      Individual metric columns are left intact.
 
     Returns the dataframe with those columns added.
     Missing input columns are handled gracefully (metric returns FAIL).
@@ -166,18 +210,24 @@ def score_momentum(df: pd.DataFrame) -> pd.DataFrame:
     df['Score']       = df[METRIC_COLS].apply(lambda r: (r == 'PASS').sum(), axis=1)
     df['AbsMom_Tier'] = df['Score'].apply(_assign_tier)
 
+    # ── ROC gate — all three return horizons must be positive ─────────────────
+    # Stocks with any negative return horizon are overridden to Skip
+    # regardless of their structural metric score.
+    # NaN return values are treated as failed (no data = no positive return).
+    roc_cols_present = all(c in df.columns for c in ['ret_12m1m', 'ret_6m1m', 'ret_3m1m'])
+    if roc_cols_present:
+        roc_pass = (
+            df['ret_12m1m'].fillna(0).gt(0) &
+            df['ret_6m1m'].fillna(0).gt(0)  &
+            df['ret_3m1m'].fillna(0).gt(0)
+        )
+        if (~roc_pass).any():
+            df.loc[~roc_pass, 'AbsMom_Tier'] = (
+                df.loc[~roc_pass].apply(_roc_skip_reason, axis=1)
+            )
+            df.loc[~roc_pass, 'Score'] = 0
+
     return df
-
-# Signals recomputed fresh by compute_fresh_signals()
-FRESH_SIGNAL_COLS = [
-    'rsi_14', 'ret_12m1m', 'ret_6m1m', 'ret_3m1m',
-    'pct_pos_days', 'proximity_52w_high',
-    'dist_ema_20', 'dist_ema_50', 'weinstein_stage2', 'bb_pct_b',
-    'mfi_14', 'vol_ratio_21_252', 'volume_price_pos_move_confirmed',
-]
-
-# Signals NOT recomputable — left stale from last rebalance parquet
-STALE_SIGNAL_COLS = ['smoothness', 'rm_r2', 'residual_momentum', 'stpb_zscore_21d']
 
 
 def compute_fresh_signals(sym_df, as_of_date):
@@ -311,6 +361,8 @@ def compute_fresh_signals(sym_df, as_of_date):
         price_up   = float(close.iloc[-1]) > float(close.iloc[-2])
         avg_vol_20 = float(volume.iloc[-21:-1].mean())
         vol_today  = float(volume.iloc[-1])
-        result['volume_price_pos_move_confirmed'] = 1 if (price_up and vol_today > avg_vol_20) else 0
+        result['volume_price_pos_move_confirmed'] = (
+            1 if (price_up and vol_today > avg_vol_20) else 0
+        )
 
     return result
