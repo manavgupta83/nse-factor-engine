@@ -201,3 +201,159 @@ Monthly — minimum 30 days between rebalances enforced by `stage6_assemble.py`.
 | Aug 2026 | Wired `mr_beta.py` into `stage6_assemble.py` — beta fields in output parquet and monitor mode |
 | Aug 2026 | Replaced MR_HYB_M (Weinstein SET1/SET2 architecture) with correct MR_M logic |
 | Aug 2026 | Fixed SET 1 bug — was taking top 12 non-holders from full universe instead of ranks 1-12 |
+
+---
+
+## Absolute Momentum Scorecard (`abs_momentum_scorecard.py`)
+
+Evaluates each stock's absolute momentum quality across 6 structural metrics.
+Outputs a score, tier, and per-metric PASS/FAIL for every stock in the input dataframe.
+
+### Purpose
+
+Complements the relative momentum rank (MR score) with an absolute quality check —
+a stock can rank highly on relative momentum but still be in a structurally weak trend.
+The scorecard flags this before it enters the portfolio.
+
+---
+
+### Input Signals
+
+#### Fresh signals (recomputed from OHLCV each run)
+
+| Signal | Used In | Min History |
+|---|---|---|
+| `rsi_14` | RSI_Strength | 15 bars |
+| `ret_12m1m` | Acceleration, ROC Gate | 273 bars |
+| `ret_6m1m` | Acceleration, ROC Gate | 147 bars |
+| `ret_3m1m` | Acceleration, ROC Gate | 84 bars |
+| `pct_pos_days` | RSI_Strength | 2 bars (252-window) |
+| `proximity_52w_high` | Hi52W_Proximity | 2 bars (252-window) |
+| `dist_ema_20` | Display / downstream only | 20 bars |
+| `dist_ema_50` | MA_Position | 50 bars |
+| `weinstein_stage2` | MA_Position | 151 bars |
+| `bb_pct_b` | Hi52W_Proximity | 20 bars |
+| `mfi_14` | Volume_Confirm | 15 bars |
+| `vol_ratio_21_252` | Volume_Confirm | 22 bars |
+| `volume_price_pos_move_confirmed` | Volume_Confirm | 22 bars |
+
+#### Stale signals (carried from last rebalance parquet — not recomputed)
+
+| Signal | Used In |
+|---|---|
+| `smoothness` | Acceleration + Trend_Strength (vs universe median) |
+| `rm_r2` | Trend_Strength |
+| `residual_momentum` | Trend_Strength |
+| `stpb_zscore_21d` | Acceleration |
+
+> `smoothness` is the only signal used in two metrics and also drives the universe-level median — most critical stale signal.
+
+---
+
+### Metric Definitions
+
+#### 1. MA_Position
+Weinstein Stage 2 confirmed + price above 50 EMA.
+
+weinstein_stage2 == 1 AND dist_ema_50 > 0
+
+
+#### 2. RSI_Strength
+Momentum confirmed by RSI and positive day ratio.
+
+rsi_14 > 50 AND pct_pos_days > 0.52
+
+
+#### 3. Acceleration
+Return horizon is accelerating + trend is smooth + recent breakout.
+
+(ret_3m1m > ret_6m1m/2 OR ret_6m1m > ret_12m1m/2)
+AND smoothness > 0.5
+AND stpb_zscore_21d > 0
+
+
+#### 4. Hi52W_Proximity
+Price is close to 52-week high and in upper Bollinger Band.
+
+proximity_52w_high > 0.75 AND bb_pct_b > 0.5
+
+
+#### 5. Trend_Strength
+Regression quality + residual momentum + smoothness vs universe.
+
+rm_r2 > 0.3 AND residual_momentum > 0 AND smoothness > universe_median
+
+
+#### 6. Volume_Confirm
+Volume is confirming upward price action.
+
+volume_price_pos_move_confirmed == 1 AND mfi_14 > 50 AND vol_ratio_21_252 > 1.0
+
+
+---
+
+### ROC Gate (post-scoring override)
+
+Applied after all 6 metrics are scored. All three return horizons must be positive:
+
+ret_12m1m > 0 AND ret_6m1m > 0 AND ret_3m1m > 0
+
+
+If any horizon is zero or negative:
+- `Score` → overridden to `0`
+- `AbsMom_Tier` → `Skip (negative: <failed col names>)`
+- Individual metric PASS/FAIL columns are left intact
+
+NaN return values are treated as failed (insufficient history = no positive return).
+
+---
+
+### Scoring & Tier Logic
+
+Each metric contributes 1 point (PASS) or 0 points (FAIL). Max score = 6.
+
+| Score | Tier | Meaning |
+|---|---|---|
+| 6/6 | `Tier1_Perfect` | All metrics pass — strongest absolute momentum |
+| 4–5/6 | `Tier2_Strong` | Solid momentum structure |
+| 2–3/6 | `Tier3_Moderate` | Weak or partial momentum |
+| <2/6 | `Skip` | Structurally too weak |
+| ROC gate fail | `Skip (negative: ...)` | One or more return horizons negative |
+
+---
+
+### Output Columns Appended
+
+| Column | Values | Description |
+|---|---|---|
+| `MA_Position` | PASS / FAIL | Weinstein Stage 2 + EMA50 |
+| `RSI_Strength` | PASS / FAIL | RSI + positive day ratio |
+| `Acceleration` | PASS / FAIL | Return acceleration + smoothness + zscore |
+| `Hi52W_Proximity` | PASS / FAIL | 52W high proximity + Bollinger %B |
+| `Trend_Strength` | PASS / FAIL | R2 + residual momentum + smoothness |
+| `Volume_Confirm` | PASS / FAIL | Volume/price confirmation + MFI |
+| `Score` | 0–6 | Count of metrics passing (0 if ROC gate fails) |
+| `AbsMom_Tier` | Tier1/2/3/Skip | Final tier label |
+
+---
+
+### Public API
+
+```python
+from signals.stage6.metrics.abs_momentum_scorecard import score_momentum, compute_fresh_signals
+
+# Score a dataframe of stocks
+scored_df = score_momentum(df)
+
+# Recompute 13 fresh signals for a single symbol from raw OHLCV
+signals = compute_fresh_signals(sym_df, as_of_date)
+```
+
+---
+
+### History
+
+| Date | Change |
+|---|---|
+| Sep 2026 | Added `abs_momentum_scorecard.py` — 6-metric absolute momentum scorecard with ROC gate and tier logic |
+| Sep 2026 | Batch-scored all 513 historical signal parquets (Jan 2016 – Jun 2026) with scorecard output columns |
